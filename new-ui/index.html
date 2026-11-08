@@ -1,0 +1,1576 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local File Manager</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- PDF.js Library (Served from node_modules via Express /pdfjs route) -->
+  <script type="module">
+    import * as pdfjsLib from '/pdfjs/pdf.mjs';
+    window.pdfjsLib = pdfjsLib;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+  </script>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-main: #020617;
+      --bg-panel: #0f172a;
+      --bg-card: #1e293b;
+      --border-color: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+    }
+
+    html:not(.dark) {
+      --bg-main: #f8fafc;
+      --bg-panel: #ffffff;
+      --bg-card: #f1f5f9;
+      --border-color: #e2e8f0;
+      --text-primary: #0f172a;
+      --text-secondary: #64748b;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 9999px;
+    }
+
+    /* PDF Canvas Container */
+    .pdf-canvas-wrapper {
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Category Active State */
+    .category-active {
+      background-color: #2563eb !important;
+      color: #ffffff !important;
+      border-color: #3b82f6 !important;
+    }
+    .category-active .category-badge {
+      background-color: rgba(255, 255, 255, 0.25) !important;
+      color: #ffffff !important;
+    }
+
+    @keyframes pulseBorder {
+      0%, 100% { border-color: #3b82f6; }
+      50% { border-color: #60a5fa; }
+    }
+    .dropzone-active {
+      animation: pulseBorder 1.5s infinite ease-in-out;
+    }
+
+    /* Gesture HUD Toast Dynamic Animations */
+    @keyframes hudPopIn {
+      0% {
+        opacity: 0;
+        transform: translate(-50%, -20px) scale(0.85);
+      }
+      60% {
+        opacity: 1;
+        transform: translate(-50%, 4px) scale(1.05);
+      }
+      100% {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(1);
+      }
+    }
+    @keyframes hudPulseGlow {
+      0%, 100% {
+        box-shadow: 0 0 25px rgba(59, 130, 246, 0.4), 0 10px 25px rgba(0, 0, 0, 0.5);
+      }
+      50% {
+        box-shadow: 0 0 40px rgba(59, 130, 246, 0.7), 0 14px 30px rgba(0, 0, 0, 0.6);
+      }
+    }
+    .gesture-hud-active {
+      animation: hudPopIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlow 1.8s ease-in-out infinite;
+    }
+
+    /* Presentation Mode Customization for PDF Modal */
+    .presentation-active #pdfViewerModal {
+      background-color: #000000 !important;
+    }
+    .presentation-active #pdfViewerHeader {
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .presentation-active.hide-chrome #pdfViewerHeader {
+      opacity: 0;
+      transform: translateY(-100%);
+      pointer-events: none;
+    }
+    .presentation-active #pdfScrollContainer {
+      background-color: #000000 !important;
+      padding: 0 !important;
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col overflow-hidden antialiased transition-colors duration-200">
+
+  <!-- Hidden File Input for Button Triggered Uploads -->
+  <input type="file" id="hiddenFileInput" multiple class="hidden">
+
+  <!-- Workspace Layout -->
+  <div class="flex-1 flex overflow-hidden relative h-full">
+
+    <!-- Sidebar Navigation -->
+    <aside class="w-64 border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 hidden md:flex flex-col shrink-0">
+      
+      <!-- Brand Logo / Title Header -->
+      <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center space-x-3">
+        <div class="p-2 bg-blue-600/10 text-blue-600 dark:text-blue-400 rounded-xl border border-blue-500/20">
+          <i data-lucide="folder-git-2" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-slate-900 dark:text-slate-100 text-sm tracking-tight">Manual and Recipe</h1>
+        </div>
+      </div>
+
+      <div class="p-4 overflow-y-auto flex-1 space-y-6">
+        
+        <!-- Categories Navigation -->
+        <div>
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2 flex justify-between items-center">
+            <span>Categories</span>
+            <span class="text-[10px] text-slate-500 lowercase font-normal">in folder</span>
+          </div>
+          <nav class="space-y-1" id="sidebarCategoryNav">
+            <button data-category="all" class="category-btn category-active w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border border-transparent transition">
+              <div class="flex items-center space-x-2.5">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+                <span>All Files</span>
+              </div>
+              <span class="category-badge px-2 py-0.5 text-[10px] rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono" id="count-all">0</span>
+            </button>
+
+            <button data-category="documents" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/80 border border-transparent transition">
+              <div class="flex items-center space-x-2.5">
+                <i data-lucide="file-text" class="w-4 h-4 text-blue-500"></i>
+                <span>Documents</span>
+              </div>
+              <span class="category-badge px-2 py-0.5 text-[10px] rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono" id="count-documents">0</span>
+            </button>
+
+            <button data-category="images" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/80 border border-transparent transition">
+              <div class="flex items-center space-x-2.5">
+                <i data-lucide="image" class="w-4 h-4 text-purple-500"></i>
+                <span>Images</span>
+              </div>
+              <span class="category-badge px-2 py-0.5 text-[10px] rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono" id="count-images">0</span>
+            </button>
+
+            <button data-category="media" class="category-btn w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/80 border border-transparent transition">
+              <div class="flex items-center space-x-2.5">
+                <i data-lucide="film" class="w-4 h-4 text-rose-500"></i>
+                <span>Media</span>
+              </div>
+              <span class="category-badge px-2 py-0.5 text-[10px] rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono" id="count-media">0</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- Quick Access Shortcuts -->
+        <div>
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">Folders</div>
+          <nav class="space-y-1">
+            <button data-quick-path="/" class="sidebar-item w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/80 transition">
+              <i data-lucide="home" class="w-4 h-4 text-blue-500"></i>
+              <span>Root Folder</span>
+            </button>
+            <button data-quick-path="/Documents" class="sidebar-item w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/80 transition">
+              <i data-lucide="folder-closed" class="w-4 h-4 text-emerald-500"></i>
+              <span>Documents</span>
+            </button>
+          </nav>
+        </div>
+      </div>
+
+      <!-- Footer Info -->
+      <div class="p-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+        <div class="p-3 bg-slate-100 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+          <p class="font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+            <i data-lucide="file-check" class="w-3.5 h-3.5 text-blue-500"></i> PDF.js Renderer
+          </p>
+          <p class="text-[11px] text-slate-400 leading-tight">Click PDF files to preview directly in browser.</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Content Workspace & Drop Zone -->
+    <main id="dropZoneContainer" class="flex-1 flex flex-col overflow-hidden relative">
+
+      <!-- Drag & Drop Visual Overlay -->
+      <div id="dropOverlay" class="absolute inset-0 bg-blue-600/10 dark:bg-blue-500/20 backdrop-blur-sm border-2 border-dashed border-blue-500 z-30 flex flex-col items-center justify-center pointer-events-none opacity-0 transition-opacity duration-200">
+        <div class="p-4 bg-blue-600 text-white rounded-full shadow-xl mb-3 animate-bounce">
+          <i data-lucide="upload-cloud" class="w-10 h-10"></i>
+        </div>
+        <p class="text-lg font-bold text-slate-900 dark:text-slate-100">Drop files to upload</p>
+        <p class="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium" id="dropTargetFolderText">Target: Current Directory</p>
+      </div>
+
+      <!-- Compact Categories Pill Bar (Mobile) -->
+      <div class="p-3 bg-slate-50 dark:bg-slate-900/40 border-b border-slate-200 dark:border-slate-800 overflow-x-auto flex items-center space-x-2 md:hidden">
+        <button data-category="all" class="category-btn category-active px-3 py-1.5 rounded-lg text-xs font-medium border border-transparent whitespace-nowrap">All Files</button>
+        <button data-category="documents" class="category-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200/60 dark:bg-slate-800 whitespace-nowrap">Documents</button>
+        <button data-category="images" class="category-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200/60 dark:bg-slate-800 whitespace-nowrap">Images</button>
+        <button data-category="media" class="category-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-200/60 dark:bg-slate-800 whitespace-nowrap">Media</button>
+      </div>
+
+      <!-- Main Workspace Toolbar -->
+      <div class="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/30 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        
+        <!-- Navigation & Breadcrumb Trail -->
+        <div class="flex items-center space-x-2 overflow-x-auto py-0.5 flex-1">
+          <button id="btnParentDir" title="Go to Parent Folder" class="p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 transition disabled:opacity-30">
+            <i data-lucide="arrow-up" class="w-4 h-4"></i>
+          </button>
+          <button id="btnRefresh" title="Refresh Directory" class="p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 transition">
+            <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Breadcrumbs -->
+          <div id="breadcrumbNav" class="flex items-center space-x-1 text-xs overflow-x-auto whitespace-nowrap bg-slate-100 dark:bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
+            <!-- Dynamic breadcrumb buttons -->
+          </div>
+        </div>
+
+        <!-- Action Controls & Search -->
+        <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+          <!-- Upload Button -->
+          <button id="uploadBtn" class="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition flex items-center space-x-1.5 shadow-md shadow-blue-600/20 active:scale-95">
+            <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+            <span>Upload File</span>
+          </button>
+
+          <!-- New Folder Button -->
+          <button id="newFolderBtn" class="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl border border-slate-200 dark:border-slate-700 transition flex items-center space-x-1.5 active:scale-95">
+            <i data-lucide="folder-plus" class="w-3.5 h-3.5 text-amber-500"></i>
+            <span>New Folder</span>
+          </button>
+
+          <div class="h-4 w-px bg-slate-200 dark:bg-slate-800 mx-1 hidden sm:block"></div>
+
+          <!-- Search Bar -->
+          <div class="relative flex-1 sm:w-48">
+            <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+            <input type="text" id="searchInput" placeholder="Search files..." 
+                   class="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-900 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-blue-500 transition">
+            <button id="clearSearchBtn" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white">
+              <i data-lucide="x" class="w-3 h-3"></i>
+            </button>
+          </div>
+
+          <!-- Sort Selector -->
+          <select id="sortSelect" class="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer">
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="name-desc">Name (Z-A)</option>
+            <option value="size-desc">Size (Largest)</option>
+            <option value="size-asc">Size (Smallest)</option>
+            <option value="mtime-desc">Date (Newest)</option>
+            <option value="mtime-asc">Date (Oldest)</option>
+          </select>
+
+          <!-- View Toggle -->
+          <div class="flex bg-slate-100 dark:bg-slate-900 p-0.5 rounded-xl border border-slate-200 dark:border-slate-800">
+            <button id="viewGridBtn" title="Grid View" class="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-800 shadow-sm transition">
+              <i data-lucide="grid" class="w-3.5 h-3.5"></i>
+            </button>
+            <button id="viewListBtn" title="List View" class="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 transition">
+              <i data-lucide="list" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- File Grid / List Display Container -->
+      <div id="fileContainer" class="flex-1 overflow-y-auto p-4 lg:p-6">
+        <!-- Rendered items -->
+      </div>
+
+      <!-- Workspace Footer -->
+      <footer class="h-10 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 px-4 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 shrink-0">
+        <div id="summaryText" class="flex items-center space-x-3">
+          <span>0 items</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <span class="font-mono text-[11px]" id="currentPathDisplay">/</span>
+        </div>
+      </footer>
+
+    </main>
+  </div>
+
+  <!-- EMBEDDED PDF.JS VIEWER MODAL -->
+  <div id="pdfViewerModal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex flex-col hidden">
+    
+    <!-- PDF Header -->
+    <header id="pdfViewerHeader" class="h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between text-slate-200 shrink-0 z-20">
+      <div class="flex items-center space-x-3 overflow-hidden max-w-xs sm:max-w-md">
+        <div class="p-1.5 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/20 shrink-0">
+          <i data-lucide="file-text" class="w-5 h-5"></i>
+        </div>
+        <div class="truncate">
+          <h3 id="pdfModalTitle" class="font-bold text-sm text-slate-100 truncate">Document.pdf</h3>
+          <p id="pdfModalSubtitle" class="text-[10px] text-slate-400 font-mono truncate">/path/to/document.pdf</p>
+        </div>
+      </div>
+
+      <!-- PDF Controls -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Pagination -->
+        <div class="flex items-center space-x-1.5 bg-slate-800 border border-slate-700 px-2 py-1 rounded-lg text-xs">
+          <button id="pdfPrevPage" title="Previous Page (←)" class="p-1 hover:bg-slate-700 rounded text-slate-300 disabled:opacity-30">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+          </button>
+          <div class="flex items-center space-x-1 font-mono text-xs">
+            <input type="number" id="pdfPageInput" value="1" min="1" class="w-10 text-center bg-slate-900 border border-slate-700 rounded py-0.5 text-white focus:outline-none focus:border-blue-500">
+            <span class="text-slate-400">/</span>
+            <span id="pdfTotalPages" class="text-slate-300">1</span>
+          </div>
+          <button id="pdfNextPage" title="Next Page (→)" class="p-1 hover:bg-slate-700 rounded text-slate-300 disabled:opacity-30">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+        <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
+
+        <!-- Zoom Controls -->
+        <div class="flex items-center space-x-1 bg-slate-800 border border-slate-700 px-2 py-1 rounded-lg text-xs">
+          <button id="pdfZoomOut" title="Zoom Out" class="p-1 hover:bg-slate-700 rounded text-slate-300">
+            <i data-lucide="zoom-out" class="w-4 h-4"></i>
+          </button>
+          <span id="pdfZoomText" class="font-mono text-[11px] w-12 text-center text-slate-300 select-none">120%</span>
+          <button id="pdfZoomIn" title="Zoom In" class="p-1 hover:bg-slate-700 rounded text-slate-300">
+            <i data-lucide="zoom-in" class="w-4 h-4"></i>
+          </button>
+          <button id="pdfFitPage" title="Fit Width" class="p-1 hover:bg-slate-700 rounded text-slate-300 ml-1">
+            <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+
+        <!-- Presentation Mode Button -->
+        <button id="pdfPresentationBtn" title="Chế độ Trình chiếu (Presentation Mode)" class="px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition shadow">
+          <i data-lucide="play" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Trình chiếu</span>
+        </button>
+
+        <!-- Rotate Control -->
+        <button id="pdfRotate" title="Rotate Clockwise" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 transition">
+          <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+        </button>
+
+        <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
+
+        <!-- Download Button -->
+        <a id="pdfDownloadBtn" href="#" download target="_blank" title="Download PDF" class="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow">
+          <i data-lucide="download" class="w-4 h-4"></i>
+        </a>
+
+        <!-- Close Modal Button -->
+        <button id="closePdfModalBtn" title="Close Viewer (Esc)" class="p-2 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white border border-slate-700 rounded-lg transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- PDF Canvas Viewport (Continuous Vertical Scroll) -->
+    <div id="pdfScrollContainer" class="flex-1 overflow-auto p-4 sm:p-8 flex flex-col items-center relative bg-slate-950">
+      
+      <!-- Gesture HUD Toast -->
+      <div id="gestureHud" class="fixed top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 hidden">
+        <div class="flex items-center space-x-3 px-6 py-3 rounded-full bg-slate-900/90 dark:bg-slate-950/90 border border-blue-500/50 text-white shadow-2xl backdrop-blur-xl gesture-hud-active">
+          <div id="gestureHudIconContainer" class="p-2 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center">
+            <i id="gestureHudIcon" data-lucide="arrow-right" class="w-6 h-6 animate-pulse"></i>
+          </div>
+          <div>
+            <div id="gestureHudText" class="font-bold text-sm tracking-wide text-white">Trang tiếp theo</div>
+            <div id="gestureHudSubtext" class="text-[10px] text-blue-400/90 font-mono">SWIPE_RIGHT DETECTED</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="pdfPagesContainer" class="flex flex-col items-center gap-6 w-full max-w-5xl my-auto">
+        <!-- Dynamically rendered PDF pages -->
+      </div>
+
+      <!-- Loading / Error Overlay -->
+      <div id="pdfLoadingOverlay" class="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center text-white z-10">
+        <i data-lucide="loader" class="w-10 h-10 animate-spin text-blue-500 mb-3"></i>
+        <p class="text-sm font-medium" id="pdfLoadingText">Rendering PDF document...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILE INSPECTOR PREVIEW MODAL -->
+  <div id="previewModal" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+      <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div class="flex items-center space-x-2 overflow-hidden">
+          <div id="modalIcon" class="p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0">
+            <i data-lucide="file" class="w-5 h-5"></i>
+          </div>
+          <h3 id="modalTitle" class="font-bold text-slate-900 dark:text-slate-100 truncate text-base">File Details</h3>
+        </div>
+        <button id="closeModalBtn" class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 overflow-y-auto flex-1">
+        <div id="modalPreviewBox" class="bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 p-4 min-h-[140px] flex items-center justify-center text-center overflow-hidden">
+        </div>
+
+        <div class="space-y-2 text-xs">
+          <div class="flex justify-between py-1.5 border-b border-slate-200 dark:border-slate-800/60">
+            <span class="text-slate-500 dark:text-slate-400">Path</span>
+            <span id="modalPath" class="font-mono text-slate-800 dark:text-slate-200 select-all truncate max-w-[240px]">/</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-slate-200 dark:border-slate-800/60">
+            <span class="text-slate-500 dark:text-slate-400">Category</span>
+            <span id="modalCategory" class="text-slate-800 dark:text-slate-200 font-medium">Document</span>
+          </div>
+          <div class="flex justify-between py-1.5 border-b border-slate-200 dark:border-slate-800/60">
+            <span class="text-slate-500 dark:text-slate-400">File Size</span>
+            <span id="modalSize" class="text-slate-800 dark:text-slate-200 font-mono">0 Bytes</span>
+          </div>
+          <div class="flex justify-between py-1.5">
+            <span class="text-slate-500 dark:text-slate-400">Last Modified</span>
+            <span id="modalDate" class="text-slate-800 dark:text-slate-200">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-end space-x-2">
+        <a id="downloadModalBtn" href="#" target="_blank" download class="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-blue-600/20">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          <span>Download</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- DELETE CONFIRMATION MODAL -->
+  <div id="deleteModal" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center space-x-3 text-rose-600 dark:text-rose-400">
+        <div class="p-2.5 bg-rose-500/10 rounded-xl border border-rose-500/20">
+          <i data-lucide="trash-2" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-slate-900 dark:text-slate-100 text-base">Delete Item?</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400">This action cannot be undone.</p>
+        </div>
+      </div>
+
+      <div class="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+        <p id="deleteTargetName" class="font-mono font-medium text-slate-800 dark:text-slate-200 truncate">filename.txt</p>
+      </div>
+
+      <div class="flex items-center justify-end space-x-2 pt-1">
+        <button id="cancelDeleteBtn" class="px-3.5 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition">Cancel</button>
+        <button id="confirmDeleteBtn" class="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition shadow-md shadow-rose-600/20">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW FOLDER MODAL -->
+  <div id="newFolderModal" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center space-x-3 text-amber-500">
+        <div class="p-2.5 bg-amber-500/10 rounded-xl border border-amber-500/20">
+          <i data-lucide="folder-plus" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-slate-900 dark:text-slate-100 text-base">New Folder</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400">Create folder in current directory</p>
+        </div>
+      </div>
+      <input type="text" id="newFolderNameInput" placeholder="Folder Name" class="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-xs focus:outline-none focus:border-blue-500 text-slate-900 dark:text-slate-100">
+      <div class="flex items-center justify-end space-x-2">
+        <button id="cancelNewFolderBtn" class="px-3.5 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition">Cancel</button>
+        <button id="confirmNewFolderBtn" class="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Container -->
+  <div id="toastContainer" class="fixed bottom-4 right-6 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <!-- APPLICATION LOGIC -->
+  <script>
+    // Initialize PDF.js worker using served route /pdfjs/pdf.worker.mjs
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+    }
+
+    // Retained Category File Extensions
+    const CATEGORIES = {
+      documents: ['pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'rtf', 'xlsx', 'pptx'],
+      images: ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp', 'ico'],
+      media: ['mp4', 'webm', 'ogg', 'mp3', 'wav', 'm4a', 'flac', 'mkv', 'avi']
+    };
+
+    // Application State
+    const state = {
+      currentPath: '/',
+      files: [],
+      filteredFiles: [],
+      activeCategory: 'all',
+      viewMode: 'grid',
+      searchQuery: '',
+      sortBy: 'name-asc',
+      selectedFile: null,
+      deleteTargetPath: null
+    };
+
+    // PDF Viewer State
+    const pdfState = {
+      pdfDoc: null,
+      pageNum: 1,
+      scale: 1.2,
+      rotation: 0,
+      filePath: null,
+      observer: null,
+      isUserScrolling: true
+    };
+
+    // DOM Elements
+    const fileContainer = document.getElementById('fileContainer');
+    const breadcrumbNav = document.getElementById('breadcrumbNav');
+    const searchInput = document.getElementById('searchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+    const sortSelect = document.getElementById('sortSelect');
+    const viewGridBtn = document.getElementById('viewGridBtn');
+    const viewListBtn = document.getElementById('viewListBtn');
+    const btnParentDir = document.getElementById('btnParentDir');
+    const btnRefresh = document.getElementById('btnRefresh');
+    const summaryText = document.getElementById('summaryText');
+    const currentPathDisplay = document.getElementById('currentPathDisplay');
+    const hiddenFileInput = document.getElementById('hiddenFileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const newFolderBtn = document.getElementById('newFolderBtn');
+
+    // PDF Modal Elements
+    const pdfViewerModal = document.getElementById('pdfViewerModal');
+    const pdfViewerHeader = document.getElementById('pdfViewerHeader');
+    const pdfPresentationBtn = document.getElementById('pdfPresentationBtn');
+    const pdfModalTitle = document.getElementById('pdfModalTitle');
+    const pdfModalSubtitle = document.getElementById('pdfModalSubtitle');
+    const pdfScrollContainer = document.getElementById('pdfScrollContainer');
+    const pdfPagesContainer = document.getElementById('pdfPagesContainer');
+    const pdfPageInput = document.getElementById('pdfPageInput');
+    const pdfTotalPages = document.getElementById('pdfTotalPages');
+    const pdfZoomText = document.getElementById('pdfZoomText');
+    const pdfLoadingOverlay = document.getElementById('pdfLoadingOverlay');
+    const pdfLoadingText = document.getElementById('pdfLoadingText');
+    const closePdfModalBtn = document.getElementById('closePdfModalBtn');
+    const pdfPrevPage = document.getElementById('pdfPrevPage');
+    const pdfNextPage = document.getElementById('pdfNextPage');
+    const pdfZoomIn = document.getElementById('pdfZoomIn');
+    const pdfZoomOut = document.getElementById('pdfZoomOut');
+    const pdfFitPage = document.getElementById('pdfFitPage');
+    const pdfRotate = document.getElementById('pdfRotate');
+    const pdfDownloadBtn = document.getElementById('pdfDownloadBtn');
+
+    // Presentation & Gesture HUD Elements
+    const gestureHud = document.getElementById('gestureHud');
+    const gestureHudIcon = document.getElementById('gestureHudIcon');
+    const gestureHudIconContainer = document.getElementById('gestureHudIconContainer');
+    const gestureHudText = document.getElementById('gestureHudText');
+    const gestureHudSubtext = document.getElementById('gestureHudSubtext');
+    let gestureHudTimer = null;
+    let presentationActive = false;
+    let gestureWs = null;
+    let lastGestureSequence = 0;
+    let hideChromeTimeout = null;
+
+    // Other Modals
+    const previewModal = document.getElementById('previewModal');
+    const deleteModal = document.getElementById('deleteModal');
+    const newFolderModal = document.getElementById('newFolderModal');
+
+    // Init App
+    window.addEventListener('DOMContentLoaded', () => {
+      initEventListeners();
+      initDragAndDrop();
+      initGestureWebSocket();
+      fetchDirectory(state.currentPath);
+    });
+
+    function initEventListeners() {
+      // Category Switching (Sidebar & Mobile Bar)
+      document.querySelectorAll('.category-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const category = e.currentTarget.getAttribute('data-category');
+          setCategoryFilter(category);
+        });
+      });
+
+      // Search & Sorting
+      searchInput.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value.trim().toLowerCase();
+        clearSearchBtn.classList.toggle('hidden', !state.searchQuery);
+        filterAndRenderFiles();
+      });
+
+      clearSearchBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        state.searchQuery = '';
+        clearSearchBtn.classList.add('hidden');
+        filterAndRenderFiles();
+      });
+
+      sortSelect.addEventListener('change', (e) => {
+        state.sortBy = e.target.value;
+        filterAndRenderFiles();
+      });
+
+      // View Modes
+      viewGridBtn.addEventListener('click', () => setViewMode('grid'));
+      viewListBtn.addEventListener('click', () => setViewMode('list'));
+
+      // Navigation Actions
+      btnParentDir.addEventListener('click', navigateToParent);
+      btnRefresh.addEventListener('click', () => {
+        showToast('Refreshing...');
+        fetchDirectory(state.currentPath);
+      });
+
+      // Uploads
+      uploadBtn.addEventListener('click', () => hiddenFileInput.click());
+      hiddenFileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          uploadFiles(Array.from(e.target.files));
+          hiddenFileInput.value = '';
+        }
+      });
+
+      // Folders
+      newFolderBtn.addEventListener('click', () => {
+        const input = document.getElementById('newFolderNameInput');
+        input.value = '';
+        newFolderModal.classList.remove('hidden');
+        setTimeout(() => input.focus(), 50);
+      });
+      document.getElementById('cancelNewFolderBtn').addEventListener('click', () => newFolderModal.classList.add('hidden'));
+      document.getElementById('confirmNewFolderBtn').addEventListener('click', createFolder);
+      document.getElementById('newFolderNameInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          createFolder();
+        } else if (e.key === 'Escape') {
+          newFolderModal.classList.add('hidden');
+        }
+      });
+
+      // Delete Modal
+      document.getElementById('cancelDeleteBtn').addEventListener('click', () => deleteModal.classList.add('hidden'));
+      document.getElementById('confirmDeleteBtn').addEventListener('click', executeDelete);
+
+      // Modal Closers
+      document.getElementById('closeModalBtn').addEventListener('click', () => previewModal.classList.add('hidden'));
+      closePdfModalBtn.addEventListener('click', () => {
+        if (presentationActive) togglePresentationMode(false);
+        if (pdfState.observer) pdfState.observer.disconnect();
+        pdfViewerModal.classList.add('hidden');
+      });
+
+      // Presentation Mode button
+      pdfPresentationBtn.addEventListener('click', () => togglePresentationMode());
+
+      // Auto-hide toolbar in presentation mode on mouse movement
+      pdfViewerModal.addEventListener('mousemove', () => resetHideChromeTimer());
+
+      // PDF Viewer Controls
+      pdfPrevPage.addEventListener('click', onPdfPrevPage);
+      pdfNextPage.addEventListener('click', onPdfNextPage);
+      pdfPageInput.addEventListener('change', (e) => {
+        const val = parseInt(e.target.value);
+        if (val >= 1 && pdfState.pdfDoc && val <= pdfState.pdfDoc.numPages) {
+          jumpToPage(val);
+        }
+      });
+      pdfZoomIn.addEventListener('click', async () => {
+        pdfState.scale += 0.2;
+        updateZoomDisplay();
+        await renderAllPages();
+      });
+      pdfZoomOut.addEventListener('click', async () => {
+        if (pdfState.scale > 0.4) {
+          pdfState.scale -= 0.2;
+          updateZoomDisplay();
+          await renderAllPages();
+        }
+      });
+      pdfFitPage.addEventListener('click', fitToWidth);
+      pdfRotate.addEventListener('click', async () => {
+        pdfState.rotation = (pdfState.rotation + 90) % 360;
+        await renderAllPages();
+      });
+
+      // Keyboard navigation (Arrow keys, Esc, F)
+      window.addEventListener('keydown', (e) => {
+        // Ignore when editing inputs or textareas
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+
+        const isViewerOpen = !pdfViewerModal.classList.contains('hidden');
+
+        if (isViewerOpen) {
+          if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+            e.preventDefault();
+            onPdfNextPage();
+          } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+            e.preventDefault();
+            onPdfPrevPage();
+          } else if (e.key === 'Escape') {
+            if (presentationActive) {
+              e.preventDefault();
+              togglePresentationMode(false);
+            } else {
+              closePdfModalBtn.click();
+            }
+          } else if (e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            togglePresentationMode();
+          }
+        }
+      });
+
+      // Fullscreen change listener to sync presentation mode
+      document.addEventListener('fullscreenchange', () => {
+        if (!document.fullscreenElement && presentationActive) {
+          togglePresentationMode(false);
+        }
+      });
+
+      // Quick Access Folders
+      document.querySelectorAll('[data-quick-path]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          fetchDirectory(e.currentTarget.getAttribute('data-quick-path'));
+        });
+      });
+    }
+
+    // Category Filter Handler
+    function setCategoryFilter(category) {
+      state.activeCategory = category;
+      document.querySelectorAll('.category-btn').forEach(btn => {
+        const cat = btn.getAttribute('data-category');
+        if (cat === category) {
+          btn.classList.add('category-active');
+        } else {
+          btn.classList.remove('category-active');
+        }
+      });
+      filterAndRenderFiles();
+    }
+
+    // Drag and Drop Upload
+    function initDragAndDrop() {
+      const dropOverlay = document.getElementById('dropOverlay');
+
+      ['dragenter', 'dragover'].forEach(name => {
+        window.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          document.getElementById('dropTargetFolderText').textContent = `Target: ${state.currentPath}`;
+          dropOverlay.classList.remove('opacity-0', 'pointer-events-none');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(name => {
+        window.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.type === 'dragleave' && e.clientX > 0 && e.clientY > 0 && e.clientX < window.innerWidth && e.clientY < window.innerHeight) return;
+          dropOverlay.classList.add('opacity-0', 'pointer-events-none');
+        });
+      });
+
+      window.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) uploadFiles(Array.from(files));
+      });
+    }
+
+    // PDF.JS EMBEDDED VIEWER LOGIC (Continuous Vertical Scrolling)
+    async function openPdfViewer(fileName) {
+      const fullPath = buildFullPath(state.currentPath, fileName);
+      pdfState.filePath = fullPath;
+      pdfState.pageNum = 1;
+      pdfState.scale = 1.2;
+      pdfState.rotation = 0;
+
+      pdfModalTitle.textContent = fileName;
+      pdfModalSubtitle.textContent = fullPath;
+      pdfViewerModal.classList.remove('hidden');
+      pdfLoadingOverlay.classList.remove('hidden');
+
+      const pdfUrl = `/api/view?path=${encodeURIComponent(fullPath)}`;
+      pdfDownloadBtn.href = `/api/download?path=${encodeURIComponent(fullPath)}`;
+
+      try {
+        if (!window.pdfjsLib) {
+          window.pdfjsLib = await import('/pdfjs/pdf.mjs');
+        }
+        if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+        }
+        if (pdfState.pdfDoc) {
+          pdfState.pdfDoc.destroy();
+        }
+        const loadingTask = window.pdfjsLib.getDocument({
+          url: pdfUrl,
+          cMapUrl: '/pdfjs/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: '/pdfjs/standard_fonts/',
+          wasmUrl: '/pdfjs/wasm/',
+        });
+        pdfState.pdfDoc = await loadingTask.promise;
+        pdfTotalPages.textContent = pdfState.pdfDoc.numPages;
+        pdfPageInput.max = pdfState.pdfDoc.numPages;
+        pdfPageInput.value = 1;
+
+        updateZoomDisplay();
+        await renderAllPages();
+      } catch (err) {
+        console.error('PDF.js Error:', err);
+        pdfLoadingText.textContent = 'Failed to load PDF file from server.';
+        showToast('Error loading PDF from backend.', 'warning');
+      }
+    }
+
+    async function renderAllPages() {
+      if (!pdfState.pdfDoc) return;
+      pdfLoadingOverlay.classList.remove('hidden');
+
+      if (pdfState.observer) {
+        pdfState.observer.disconnect();
+      }
+
+      pdfPagesContainer.innerHTML = '';
+
+      const numPages = pdfState.pdfDoc.numPages;
+      const pageWrappers = [];
+
+      for (let i = 1; i <= numPages; i++) {
+        const wrapper = document.createElement('div');
+        wrapper.id = `pdf-page-wrapper-${i}`;
+        wrapper.setAttribute('data-page-num', i);
+        wrapper.className = 'pdf-canvas-wrapper relative transition-all duration-150 rounded-lg overflow-hidden bg-white shadow-2xl my-2';
+        
+        const canvas = document.createElement('canvas');
+        canvas.id = `pdf-canvas-${i}`;
+        canvas.className = 'block';
+        
+        wrapper.appendChild(canvas);
+        pdfPagesContainer.appendChild(wrapper);
+        pageWrappers.push({ wrapper, canvas, pageNum: i });
+      }
+
+      const dpr = window.devicePixelRatio || 1;
+      for (const item of pageWrappers) {
+        try {
+          const page = await pdfState.pdfDoc.getPage(item.pageNum);
+          const viewport = page.getViewport({ scale: pdfState.scale, rotation: pdfState.rotation });
+
+          item.canvas.width = Math.floor(viewport.width * dpr);
+          item.canvas.height = Math.floor(viewport.height * dpr);
+          item.canvas.style.width = Math.floor(viewport.width) + 'px';
+          item.canvas.style.height = Math.floor(viewport.height) + 'px';
+
+          const ctx = item.canvas.getContext('2d');
+          ctx.scale(dpr, dpr);
+
+          await page.render({
+            canvasContext: ctx,
+            viewport: viewport
+          }).promise;
+        } catch (e) {
+          console.error(`Error rendering PDF page ${item.pageNum}:`, e);
+        }
+      }
+
+      pdfLoadingOverlay.classList.add('hidden');
+      setupIntersectionObserver();
+    }
+
+    function setupIntersectionObserver() {
+      if (pdfState.observer) {
+        pdfState.observer.disconnect();
+      }
+
+      const options = {
+        root: pdfScrollContainer,
+        rootMargin: '0px',
+        threshold: 0.3
+      };
+
+      pdfState.observer = new IntersectionObserver((entries) => {
+        if (!pdfState.isUserScrolling) return;
+
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const pageNum = parseInt(entry.target.getAttribute('data-page-num'));
+            if (pageNum) {
+              pdfState.pageNum = pageNum;
+              pdfPageInput.value = pageNum;
+            }
+          }
+        });
+      }, options);
+
+      const wrappers = pdfPagesContainer.querySelectorAll('[data-page-num]');
+      wrappers.forEach(w => pdfState.observer.observe(w));
+    }
+
+    function jumpToPage(pageNum) {
+      if (!pdfState.pdfDoc) return;
+      const validNum = Math.max(1, Math.min(pageNum, pdfState.pdfDoc.numPages));
+      pdfState.pageNum = validNum;
+      pdfPageInput.value = validNum;
+
+      const targetWrapper = document.getElementById(`pdf-page-wrapper-${validNum}`);
+      if (targetWrapper) {
+        pdfState.isUserScrolling = false;
+        targetWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+          pdfState.isUserScrolling = true;
+        }, 600);
+      }
+    }
+
+    function onPdfPrevPage() {
+      if (pdfState.pageNum > 1) {
+        jumpToPage(pdfState.pageNum - 1);
+      }
+    }
+
+    function onPdfNextPage() {
+      if (pdfState.pdfDoc && pdfState.pageNum < pdfState.pdfDoc.numPages) {
+        jumpToPage(pdfState.pageNum + 1);
+      }
+    }
+
+    async function fitToWidth() {
+      if (!pdfState.pdfDoc) return;
+      try {
+        const page = await pdfState.pdfDoc.getPage(1);
+        const unscaledViewport = page.getViewport({ scale: 1.0, rotation: pdfState.rotation });
+        const containerWidth = pdfScrollContainer.clientWidth - 64;
+        if (containerWidth > 200 && unscaledViewport.width > 0) {
+          pdfState.scale = Math.max(0.4, Math.min(2.5, containerWidth / unscaledViewport.width));
+          updateZoomDisplay();
+          await renderAllPages();
+        }
+      } catch (e) {
+        pdfState.scale = 1.2;
+        updateZoomDisplay();
+        await renderAllPages();
+      }
+    }
+
+    function updateZoomDisplay() {
+      pdfZoomText.textContent = `${Math.round(pdfState.scale * 100)}%`;
+    }
+
+    // ------------------------------------------------------------------
+    // PRESENTATION MODE (Full-Screen & Distraction-Free)
+    // ------------------------------------------------------------------
+    function togglePresentationMode(forceState = null) {
+      const modal = pdfViewerModal;
+      if (modal.classList.contains('hidden')) return;
+
+      const target = forceState !== null ? forceState : !presentationActive;
+      presentationActive = target;
+      document.body.classList.toggle('presentation-active', presentationActive);
+
+      if (presentationActive) {
+        pdfPresentationBtn.classList.remove('bg-blue-600/20', 'text-blue-400');
+        pdfPresentationBtn.classList.add('bg-blue-600', 'text-white');
+        pdfPresentationBtn.querySelector('span').textContent = 'Thoát';
+        showToast('Chế độ trình chiếu: Bật (F / Esc để thoát, ← / → đổi trang)');
+        try {
+          if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          }
+        } catch (_) {}
+        // Auto fit width for immersive presentation
+        fitToWidth();
+        resetHideChromeTimer();
+      } else {
+        pdfPresentationBtn.classList.remove('bg-blue-600', 'text-white');
+        pdfPresentationBtn.classList.add('bg-blue-600/20', 'text-blue-400');
+        pdfPresentationBtn.querySelector('span').textContent = 'Trình chiếu';
+        document.body.classList.remove('hide-chrome');
+        clearTimeout(hideChromeTimeout);
+        try {
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+          }
+        } catch (_) {}
+      }
+    }
+
+    function resetHideChromeTimer() {
+      if (!presentationActive) return;
+      document.body.classList.remove('hide-chrome');
+      clearTimeout(hideChromeTimeout);
+      hideChromeTimeout = setTimeout(() => {
+        if (presentationActive) {
+          document.body.classList.add('hide-chrome');
+        }
+      }, 2500);
+    }
+
+    // ------------------------------------------------------------------
+    // GESTURE HUD TOAST NOTIFICATION SYSTEM
+    // ------------------------------------------------------------------
+    function showGestureHud(gesture) {
+      if (!gestureHud) return;
+
+      clearTimeout(gestureHudTimer);
+      const isNext = gesture === 'SWIPE_RIGHT';
+
+      gestureHudText.textContent = isNext ? 'Trang tiếp theo' : 'Trang trước đó';
+      gestureHudSubtext.textContent = isNext ? '👉 SWIPE_RIGHT DETECTED' : '👈 SWIPE_LEFT DETECTED';
+      gestureHudIcon.setAttribute('data-lucide', isNext ? 'arrow-right' : 'arrow-left');
+
+      if (isNext) {
+        gestureHudIconContainer.className = 'p-2 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center';
+      } else {
+        gestureHudIconContainer.className = 'p-2 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center';
+      }
+
+      if (window.lucide) {
+        lucide.createIcons({
+          targets: [gestureHudIcon]
+        });
+      }
+
+      gestureHud.classList.remove('hidden');
+      gestureHud.classList.add('gesture-hud-active');
+
+      gestureHudTimer = setTimeout(() => {
+        gestureHud.classList.add('hidden');
+        gestureHud.classList.remove('gesture-hud-active');
+      }, 1400);
+    }
+
+    // ------------------------------------------------------------------
+    // WEBSOCKET CLIENT FOR GESTURES (INSTANT SLIDE NAVIGATION)
+    // ------------------------------------------------------------------
+    function handleGestureEvent(data) {
+      if (!data || !data.gesture) return;
+      if (data.sequence && data.sequence <= lastGestureSequence) return;
+      if (data.sequence) lastGestureSequence = data.sequence;
+
+      const isViewerOpen = !pdfViewerModal.classList.contains('hidden');
+
+      if (data.gesture === 'SWIPE_RIGHT') {
+        showGestureHud('SWIPE_RIGHT');
+        if (isViewerOpen) {
+          onPdfNextPage();
+        }
+      } else if (data.gesture === 'SWIPE_LEFT') {
+        showGestureHud('SWIPE_LEFT');
+        if (isViewerOpen) {
+          onPdfPrevPage();
+        }
+      }
+    }
+
+    function initGestureWebSocket() {
+      if (gestureWs) {
+        try { gestureWs.close(); } catch (_) {}
+        gestureWs = null;
+      }
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // Connect to local Node server endpoint
+      const wsUrl = `${proto}//${location.host}/ws/gesture`;
+
+      try {
+        const ws = new WebSocket(wsUrl);
+        gestureWs = ws;
+
+        ws.onopen = () => {
+          console.log('[Gesture WS] Connected to backend gesture WebSocket stream');
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleGestureEvent(data);
+          } catch (e) {
+            console.error('[Gesture WS] Failed to parse message:', e);
+          }
+        };
+
+        ws.onclose = () => {
+          // Reconnect after 3 seconds if disconnected
+          gestureWs = null;
+          setTimeout(initGestureWebSocket, 3000);
+        };
+
+        ws.onerror = (err) => {
+          console.warn('[Gesture WS] WebSocket error (will retry):', err);
+        };
+      } catch (err) {
+        console.warn('[Gesture WS] Init error:', err);
+        setTimeout(initGestureWebSocket, 3000);
+      }
+    }
+
+    // Direct Express Backend Directory Fetching
+    async function fetchDirectory(targetPath) {
+      const safePath = normalizePath(targetPath);
+      const endpoint = `/api/files?path=${encodeURIComponent(safePath)}`;
+
+      try {
+        const res = await fetch(endpoint, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+
+        const data = await res.json();
+        state.currentPath = data.currentPath || safePath;
+        state.files = data.files || [];
+        updateCategoryCounts();
+        filterAndRenderFiles();
+        renderBreadcrumbs();
+      } catch (err) {
+        console.error('Fetch error:', err);
+        showToast(`Failed to load directory: ${err.message}`, 'warning');
+      }
+    }
+
+    function updateCategoryCounts() {
+      const counts = { all: state.files.length, documents: 0, images: 0, media: 0 };
+
+      state.files.forEach(f => {
+        if (!f.isDirectory) {
+          const ext = getFileExtension(f.name);
+          for (const [cat, exts] of Object.entries(CATEGORIES)) {
+            if (exts.includes(ext)) {
+              counts[cat]++;
+            }
+          }
+        }
+      });
+
+      for (const [cat, count] of Object.entries(counts)) {
+        const el = document.getElementById(`count-${cat}`);
+        if (el) el.textContent = count;
+      }
+    }
+
+    function filterAndRenderFiles() {
+      let result = [...state.files];
+
+      // Category Filter
+      if (state.activeCategory !== 'all') {
+        const allowedExts = CATEGORIES[state.activeCategory] || [];
+        result = result.filter(f => f.isDirectory || allowedExts.includes(getFileExtension(f.name)));
+      }
+
+      // Search Filter
+      if (state.searchQuery) {
+        result = result.filter(f => f.name.toLowerCase().includes(state.searchQuery));
+      }
+
+      // Sorting
+      const [key, dir] = state.sortBy.split('-');
+      const mult = dir === 'asc' ? 1 : -1;
+
+      result.sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        if (key === 'name') return mult * a.name.localeCompare(b.name, undefined, { numeric: true });
+        if (key === 'size') return mult * ((a.size || 0) - (b.size || 0));
+        if (key === 'mtime') return mult * (new Date(a.mtime || 0) - new Date(b.mtime || 0));
+        return 0;
+      });
+
+      state.filteredFiles = result;
+      renderFiles();
+      updateSummary();
+    }
+
+    function renderFiles() {
+      if (!state.filteredFiles || state.filteredFiles.length === 0) {
+        renderEmptyState();
+        return;
+      }
+
+      if (state.viewMode === 'grid') {
+        renderGridView();
+      } else {
+        renderListView();
+      }
+
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function renderGridView() {
+      fileContainer.innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          ${state.filteredFiles.map(file => {
+            const meta = getFileTypeMeta(file);
+            const isDir = file.isDirectory;
+            const isPdf = !isDir && getFileExtension(file.name) === 'pdf';
+
+            return `
+              <div data-filename="${escapeHtml(file.name)}" data-isdir="${isDir}"
+                   class="file-card group relative bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex flex-col items-center text-center transition duration-200 cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-0.5">
+                
+                ${isPdf ? `<span class="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] font-bold font-mono bg-rose-500/20 text-rose-500 rounded border border-rose-500/30">PDF</span>` : ''}
+
+                <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 z-10">
+                  <button data-action="delete" data-filename="${escapeHtml(file.name)}" title="Delete" class="p-1.5 text-slate-400 hover:text-white bg-slate-100 dark:bg-slate-950 hover:bg-rose-600 rounded-lg transition">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+
+                <div class="w-12 h-12 my-2 rounded-2xl flex items-center justify-center ${meta.bgColor} ${meta.textColor} transition-transform group-hover:scale-105">
+                  <i data-lucide="${meta.icon}" class="w-6 h-6"></i>
+                </div>
+
+                <div class="w-full mt-1">
+                  <h4 class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400" title="${escapeHtml(file.name)}">
+                    ${escapeHtml(file.name)}
+                  </h4>
+                  <p class="text-[10px] text-slate-400 font-mono mt-0.5">${isDir ? 'Folder' : formatFileSize(file.size)}</p>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+
+      attachCardClickEvents();
+    }
+
+    function renderListView() {
+      fileContainer.innerHTML = `
+        <div class="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 shadow-sm">
+          <table class="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+            <thead class="bg-slate-50 dark:bg-slate-900 text-slate-400 border-b border-slate-200 dark:border-slate-800 font-medium">
+              <tr>
+                <th scope="col" class="py-3 px-4">Name</th>
+                <th scope="col" class="py-3 px-4">Category</th>
+                <th scope="col" class="py-3 px-4">Size</th>
+                <th scope="col" class="py-3 px-4 hidden md:table-cell">Date</th>
+                <th scope="col" class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800/60">
+              ${state.filteredFiles.map(file => {
+                const meta = getFileTypeMeta(file);
+                const isDir = file.isDirectory;
+
+                return `
+                  <tr data-filename="${escapeHtml(file.name)}" data-isdir="${isDir}" class="file-card hover:bg-slate-50 dark:hover:bg-slate-800/50 transition cursor-pointer group">
+                    <td class="py-2.5 px-4 flex items-center space-x-3">
+                      <div class="p-1.5 rounded-lg ${meta.bgColor} ${meta.textColor} shrink-0">
+                        <i data-lucide="${meta.icon}" class="w-4 h-4"></i>
+                      </div>
+                      <span class="font-medium text-slate-800 dark:text-slate-200 group-hover:text-blue-500 truncate max-w-xs sm:max-w-md">${escapeHtml(file.name)}</span>
+                    </td>
+                    <td class="py-2.5 px-4 text-slate-400 font-mono text-[11px]">${isDir ? 'Folder' : meta.label}</td>
+                    <td class="py-2.5 px-4 font-mono text-slate-400 text-[11px]">${isDir ? '--' : formatFileSize(file.size)}</td>
+                    <td class="py-2.5 px-4 hidden md:table-cell text-slate-400 text-[11px]">${formatDate(file.mtime)}</td>
+                    <td class="py-2.5 px-4 text-right">
+                      <button data-action="delete" data-filename="${escapeHtml(file.name)}" class="p-1.5 text-slate-400 hover:text-white hover:bg-rose-600 rounded-lg transition">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      attachCardClickEvents();
+    }
+
+    function attachCardClickEvents() {
+      document.querySelectorAll('.file-card').forEach(element => {
+        element.addEventListener('click', (e) => {
+          const actionBtn = e.target.closest('[data-action]');
+          const fileName = element.getAttribute('data-filename');
+          const isDir = element.getAttribute('data-isdir') === 'true';
+
+          if (actionBtn) {
+            e.stopPropagation();
+            if (actionBtn.getAttribute('data-action') === 'delete') promptDelete(fileName);
+            return;
+          }
+
+          if (isDir) {
+            fetchDirectory(buildFullPath(state.currentPath, fileName));
+          } else if (getFileExtension(fileName) === 'pdf') {
+            openPdfViewer(fileName);
+          } else {
+            openInspectorModal(fileName);
+          }
+        });
+      });
+    }
+
+    function renderEmptyState() {
+      fileContainer.innerHTML = `
+        <div class="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-slate-400">
+          <div class="p-4 bg-slate-100 dark:bg-slate-900 rounded-full border border-slate-200 dark:border-slate-800 mb-3 text-slate-400">
+            <i data-lucide="folder-open" class="w-8 h-8"></i>
+          </div>
+          <p class="font-bold text-slate-700 dark:text-slate-300">No items found</p>
+          <p class="text-xs text-slate-500 mt-1">Directory is empty or no files match the current category.</p>
+        </div>
+      `;
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function openInspectorModal(fileName) {
+      const file = state.files.find(f => f.name === fileName);
+      if (!file) return;
+
+      state.selectedFile = file;
+      const meta = getFileTypeMeta(file);
+      const fullPath = buildFullPath(state.currentPath, file.name);
+
+      document.getElementById('modalTitle').textContent = file.name;
+      document.getElementById('modalPath').textContent = fullPath;
+      document.getElementById('modalCategory').textContent = meta.label;
+      document.getElementById('modalSize').textContent = formatFileSize(file.size);
+      document.getElementById('modalDate').textContent = formatDate(file.mtime);
+
+      const previewBox = document.getElementById('modalPreviewBox');
+      const ext = getFileExtension(file.name);
+
+      if (['jpg', 'jpeg', 'png', 'svg', 'webp', 'gif'].includes(ext)) {
+        previewBox.innerHTML = `<img src="/api/view?path=${encodeURIComponent(fullPath)}" class="max-h-48 rounded-lg object-contain" alt="Preview">`;
+      } else {
+        previewBox.innerHTML = `<div class="p-4 text-xs text-slate-400 font-mono">Preview unavailable for .${ext} files. Use download link below.</div>`;
+      }
+
+      document.getElementById('downloadModalBtn').href = `/api/download?path=${encodeURIComponent(fullPath)}`;
+      previewModal.classList.remove('hidden');
+      if (window.lucide) lucide.createIcons();
+    }
+
+    // Direct Express Server Upload / Delete Operations
+    async function uploadFiles(filesList) {
+      showToast(`Uploading ${filesList.length} file(s)...`);
+
+      const formData = new FormData();
+      formData.append('path', state.currentPath);
+      filesList.forEach(f => formData.append('files', f));
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (res.ok) {
+          showToast('Uploaded successfully');
+          fetchDirectory(state.currentPath);
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          showToast(errData.error || 'Upload failed', 'warning');
+        }
+      } catch (err) {
+        showToast('Upload failed', 'warning');
+      }
+    }
+
+    function promptDelete(fileName) {
+      state.deleteTargetPath = buildFullPath(state.currentPath, fileName);
+      document.getElementById('deleteTargetName').textContent = fileName;
+      deleteModal.classList.remove('hidden');
+    }
+
+    async function executeDelete() {
+      deleteModal.classList.add('hidden');
+      if (!state.deleteTargetPath) return;
+
+      try {
+        const res = await fetch(`/api/delete?path=${encodeURIComponent(state.deleteTargetPath)}`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast('Deleted successfully');
+          fetchDirectory(state.currentPath);
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          showToast(errData.error || 'Delete failed', 'warning');
+        }
+      } catch (err) {
+        showToast('Delete failed', 'warning');
+      }
+    }
+
+    async function createFolder() {
+      const nameInput = document.getElementById('newFolderNameInput');
+      const name = nameInput.value.trim();
+      if (!name) return;
+
+      try {
+        const res = await fetch('/api/create-folder', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            path: state.currentPath,
+            name: name
+          })
+        });
+
+        if (res.ok) {
+          newFolderModal.classList.add('hidden');
+          nameInput.value = '';
+          showToast(`Folder "${name}" created successfully`);
+          fetchDirectory(state.currentPath);
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          showToast(errData.error || 'Failed to create folder', 'warning');
+        }
+      } catch (err) {
+        showToast('Failed to create folder', 'warning');
+      }
+    }
+
+    // Navigation & Helper Functions
+    function renderBreadcrumbs() {
+      const parts = state.currentPath.split('/').filter(Boolean);
+      let cumulativePath = '';
+
+      let html = `
+        <button data-path="/" class="px-2 py-0.5 rounded text-slate-400 hover:text-white transition">Home</button>
+      `;
+
+      parts.forEach((part) => {
+        cumulativePath += '/' + part;
+        html += `
+          <span class="text-slate-500">/</span>
+          <button data-path="${cumulativePath}" class="px-2 py-0.5 rounded text-slate-300 font-medium hover:text-white">${escapeHtml(part)}</button>
+        `;
+      });
+
+      breadcrumbNav.innerHTML = html;
+      breadcrumbNav.querySelectorAll('[data-path]').forEach(btn => {
+        btn.addEventListener('click', (e) => fetchDirectory(e.currentTarget.getAttribute('data-path')));
+      });
+
+      btnParentDir.disabled = state.currentPath === '/';
+      currentPathDisplay.textContent = state.currentPath;
+    }
+
+    function navigateToParent() {
+      if (state.currentPath === '/') return;
+      const parts = state.currentPath.split('/').filter(Boolean);
+      parts.pop();
+      fetchDirectory('/' + parts.join('/'));
+    }
+
+    function setViewMode(mode) {
+      state.viewMode = mode;
+      renderFiles();
+    }
+
+    function updateSummary() {
+      summaryText.textContent = `${state.filteredFiles.length} items listed`;
+    }
+
+    function getFileTypeMeta(file) {
+      if (file.isDirectory) return { icon: 'folder', bgColor: 'bg-amber-500/10 border border-amber-500/20', textColor: 'text-amber-500', label: 'Folder' };
+      const ext = getFileExtension(file.name);
+      if (CATEGORIES.documents.includes(ext)) return { icon: 'file-text', bgColor: 'bg-blue-500/10 border border-blue-500/20', textColor: 'text-blue-500', label: 'Document' };
+      if (CATEGORIES.images.includes(ext)) return { icon: 'image', bgColor: 'bg-purple-500/10 border border-purple-500/20', textColor: 'text-purple-500', label: 'Image' };
+      if (CATEGORIES.media.includes(ext)) return { icon: 'film', bgColor: 'bg-rose-500/10 border border-rose-500/20', textColor: 'text-rose-500', label: 'Media' };
+      return { icon: 'file', bgColor: 'bg-slate-800 border border-slate-700', textColor: 'text-slate-400', label: 'File' };
+    }
+
+    function getFileExtension(filename) {
+      return filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes) return '0 B';
+      const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function buildFullPath(current, name) {
+      return current === '/' ? '/' + name : current + '/' + name;
+    }
+
+    function normalizePath(p) {
+      let clean = (p || '/').replace(/\/+/g, '/');
+      if (!clean.startsWith('/')) clean = '/' + clean;
+      if (clean.length > 1 && clean.endsWith('/')) clean = clean.slice(0, -1);
+      return clean;
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function showToast(msg) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'pointer-events-auto px-4 py-2 bg-slate-900 border border-slate-700 text-white text-xs rounded-xl shadow-xl transition-all opacity-0 translate-y-2';
+      toast.textContent = msg;
+      container.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.remove('opacity-0', 'translate-y-2'));
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+  </script>
+</body>
+</html>

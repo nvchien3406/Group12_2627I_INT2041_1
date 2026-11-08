@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Gesture Slide · Baseline</title>
+  <link rel="stylesheet" href="/static/styles.css?v=presentation-1">
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="/" aria-label="Gesture Slide trang chính">
+      <span class="brand-icon" aria-hidden="true">G</span>
+      <span>Gesture Slide<span class="brand-caption">KHÔNG GIAN TRÌNH CHIẾU</span></span>
+    </a>
+    <div class="header-right"><span class="version">BASELINE 01</span><span id="serverStatus" class="server-status">Đang kết nối…</span></div>
+  </header>
+  <main>
+    <div class="intro">
+      <div><p class="eyebrow">PDF + MEDIAPIPE</p><h1>Bắt đầu từ bàn tay của bạn.</h1><p class="lead">Mở tài liệu, bật camera và xem các khớp tay được nhận diện theo thời gian thực.</p></div>
+      <label class="button primary import-button" for="pdfInput"><span aria-hidden="true">+</span> Import PDF</label>
+      <input id="pdfInput" type="file" accept="application/pdf,.pdf" class="visually-hidden">
+    </div>
+    <div class="steps" aria-label="Các bước sử dụng">
+      <span id="stepPdf" class="step active"><b>1</b> Mở PDF</span><span class="step-divider"></span>
+      <span id="stepCamera" class="step"><b>2</b> Bật camera</span><span class="step-divider"></span>
+      <span id="stepHand" class="step"><b>3</b> Đưa tay vào khung hình</span>
+    </div>
+    <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+    <div class="workspace">
+      <section class="document-panel panel" aria-label="Tài liệu PDF">
+        <div class="panel-header"><div class="document-title"><span class="file-badge">PDF</span><span id="fileName">Chưa có tài liệu</span></div><span id="pdfStatus" class="muted">Chọn một file để bắt đầu</span></div>
+        <div id="pdfStage" class="pdf-stage">
+          <div id="gestureHud" class="gesture-hud" hidden></div>
+          <div id="pdfEmpty" class="empty-state">
+            <svg width="70" height="78" viewBox="0 0 70 78" fill="none" aria-hidden="true"><path d="M15 3h26l17 18v53H15a8 8 0 0 1-8-8V11a8 8 0 0 1 8-8Z" fill="#fff" stroke="#c8d4cc" stroke-width="2"/><path d="M40 3v19h18M20 38h25M20 48h25M20 58h16" stroke="#83998b" stroke-width="2" stroke-linecap="round"/></svg>
+            <h2>Tài liệu của bạn ở đây</h2><p>Chọn một file PDF từ máy tính.<br>Mỗi trang PDF sẽ là một slide.</p>
+            <label class="button secondary" for="pdfInput">Chọn file PDF</label><small>Tối đa 50 MB · File được đọc trong trình duyệt</small>
+          </div>
+          <div id="canvasHost" hidden></div>
+        </div>
+        <div class="viewer-toolbar" aria-label="Cách hiển thị PDF">
+          <label for="viewMode">Hiển thị</label>
+          <select id="viewMode" disabled>
+            <option value="auto">Tự động</option><option value="page">Vừa toàn bộ trang</option>
+            <option value="width">Vừa chiều rộng</option><option value="custom">Thu/phóng tùy chỉnh</option>
+          </select>
+          <button id="zoomOut" class="icon-button" aria-label="Thu nhỏ" disabled>−</button>
+          <output id="zoomLevel" aria-live="polite">—</output>
+          <button id="zoomIn" class="icon-button" aria-label="Phóng to" disabled>+</button>
+          <button id="presentationButton" class="button primary" disabled>Trình chiếu</button>
+        </div>
+        <p id="viewHint" class="view-hint" aria-live="polite">Mở PDF để chọn cách hiển thị.</p>
+        <div class="document-footer"><span class="muted" id="documentHint">Có thể dùng phím ← và → để đổi trang</span><nav aria-label="Chuyển trang"><button id="previousPage" class="icon-button" title="Trang trước" aria-label="Trang trước" disabled>←</button><span id="pageCounter">— / —</span><button id="nextPage" class="icon-button" title="Trang tiếp" aria-label="Trang tiếp" disabled>→</button></nav></div>
+      </section>
+      <aside class="camera-column">
+        <section class="panel camera-panel" aria-label="Nhận diện bàn tay">
+          <div class="panel-header"><h2>Camera & bàn tay</h2><span id="cameraBadge" class="badge">Đã tắt</span></div>
+          <div class="camera-stage"><img id="cameraPreview" alt="Camera soi gương với khung xương bàn tay" hidden><div id="cameraEmpty" class="camera-empty"><svg width="46" height="38" viewBox="0 0 46 38" fill="none" aria-hidden="true"><rect x="2" y="8" width="42" height="27" rx="7" stroke="currentColor" stroke-width="2"/><circle cx="23" cy="22" r="8" stroke="currentColor" stroke-width="2"/><path d="m12 8 4-5h14l4 5" stroke="currentColor" stroke-width="2"/></svg><p id="cameraPlaceholder">Mở PDF để bật camera</p></div></div>
+          <div class="camera-controls"><div class="camera-select-row"><label for="cameraIndex">Thiết bị</label><select id="cameraIndex"><option value="0">Camera 0 · mặc định</option><option value="1">Camera 1</option><option value="2">Camera 2</option><option value="3">Camera 3</option><option value="4">Camera 4</option></select></div><button id="cameraButton" class="button primary full-width" disabled>Bật camera</button><p id="cameraMessage" class="camera-message" aria-live="polite">Chọn PDF trước khi bắt đầu nhận diện.</p></div>
+          <div class="metrics"><div><strong id="handCount">—</strong><span>Bàn tay</span></div><div><strong id="cameraFps">—</strong><span>FPS xử lý</span></div><div><strong id="processingTime">—</strong><span>ms / frame</span></div></div>
+          <div id="handDetails" class="hand-details" aria-live="polite"></div>
+        </section>
+        <section class="guide"><span class="guide-icon" aria-hidden="true">✳</span><div><h3>Thử đưa một bàn tay lên</h3><p>Giữ tay trong khung hình, đủ sáng và cách camera khoảng một cánh tay. Các điểm trắng và đường nối sẽ bám theo bàn tay.</p></div></section>
+        <p class="local-note">Ảnh được xử lý trên máy đang chạy ứng dụng. Bản này nhận diện khớp tay; chuyển slide bằng nút hoặc phím mũi tên.</p>
+      </aside>
+    </div>
+    <footer class="page-footer"><span>Gesture Slide / Nhóm HMI</span><span>21 khớp mỗi bàn tay · Tối đa 2 tay · Hình soi gương</span></footer>
+  </main>
+  <noscript>Vui lòng bật JavaScript để mở PDF và điều khiển camera.</noscript>
+  <script type="module" src="/static/app.js?v=presentation-1"></script>
+</body>
+</html>

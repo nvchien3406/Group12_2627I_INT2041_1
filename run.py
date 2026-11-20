@@ -13,7 +13,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--dir", type=str, default=None, help="Thu muc goc cho File Manager")
     args = parser.parse_args()
+    if args.dir:
+        os.environ["HMI_FILE_DIR"] = str(Path(args.dir).resolve())
     os.chdir(Path(__file__).resolve().parent)
     with socket.socket() as probe:
         try:

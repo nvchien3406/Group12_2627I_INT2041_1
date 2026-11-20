@@ -1,13 +1,17 @@
 const express = require('express');
 const fs = require('fs/promises');
+const fsSync = require('fs');
 const path = require('path');
 const multer = require('multer');
 const http = require('http');
+const net = require('net');
 const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
 const PORT = 3000;
+const CAMERA_BACKEND_HOST = process.env.CAMERA_BACKEND_HOST || '127.0.0.1';
+const CAMERA_BACKEND_PORT = Number(process.env.CAMERA_BACKEND_PORT || 8000);
 const BASE_DIR = path.resolve(process.argv[2] || path.join(__dirname, 'file'));
 
 // ------------------------------------------------------------------
@@ -56,8 +60,47 @@ function broadcastGesture(gesture, extra = {}) {
 }
 
 server.on('upgrade', (req, socket, head) => {
-  // Support both /ws/gesture and /ws/gesture/:session
-  if (!req.url.startsWith('/ws/gesture')) {
+  // Proxy session-scoped gesture WebSockets (/ws/gesture/:session_id) to FastAPI camera backend
+  if (/^\/ws\/gesture\/[^/?]+/.test(req.url)) {
+    const upstream = net.connect(CAMERA_BACKEND_PORT, CAMERA_BACKEND_HOST, () => {
+      const headerLines = [`GET ${req.url} HTTP/1.1`];
+      const raw = req.rawHeaders || [];
+      for (let i = 0; i < raw.length; i += 2) {
+        const name = raw[i];
+        let value = raw[i + 1];
+        const lower = name.toLowerCase();
+        if (lower === 'host') {
+          value = `${CAMERA_BACKEND_HOST}:${CAMERA_BACKEND_PORT}`;
+        } else if (lower === 'origin') {
+          value = `http://${CAMERA_BACKEND_HOST}:${CAMERA_BACKEND_PORT}`;
+        }
+        headerLines.push(`${name}: ${value}`);
+      }
+      upstream.write(headerLines.join('\r\n') + '\r\n\r\n');
+      if (head && head.length > 0) {
+        upstream.write(head);
+      }
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    });
+
+    upstream.on('error', () => {
+      if (!socket.destroyed) socket.destroy();
+    });
+    upstream.on('close', () => {
+      if (!socket.destroyed) socket.destroy();
+    });
+    socket.on('error', () => {
+      if (!upstream.destroyed) upstream.destroy();
+    });
+    socket.on('close', () => {
+      if (!upstream.destroyed) upstream.destroy();
+    });
+    return;
+  }
+
+  // Local WebSocket strictly for /ws/gesture
+  if (!(req.url === '/ws/gesture' || req.url.startsWith('/ws/gesture?'))) {
     socket.destroy();
     return;
   }
@@ -84,10 +127,62 @@ server.on('upgrade', (req, socket, head) => {
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+function proxyToCameraBackend(req, res) {
+  const headers = {
+    ...req.headers,
+    host: `${CAMERA_BACKEND_HOST}:${CAMERA_BACKEND_PORT}`,
+  };
+  if (headers.origin) {
+    headers.origin = `http://${CAMERA_BACKEND_HOST}:${CAMERA_BACKEND_PORT}`;
+  }
+
+  if (req.originalUrl.endsWith('/preview')) {
+    req.socket.setTimeout(0);
+    res.setTimeout(0);
+  }
+
+  const proxyReq = http.request({
+    hostname: CAMERA_BACKEND_HOST,
+    port: CAMERA_BACKEND_PORT,
+    path: req.originalUrl,
+    method: req.method,
+    headers,
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    res.flushHeaders();
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.setTimeout(0);
+
+  proxyReq.on('error', () => {
+    if (!res.headersSent) {
+      res.status(502).json({
+        detail: `Dịch vụ camera (FastAPI) chưa sẵn sàng tại port ${CAMERA_BACKEND_PORT}. Hãy chạy run.py.`
+      });
+    } else {
+      res.end();
+    }
+  });
+
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      proxyReq.destroy();
+    }
+  });
+
+  req.pipe(proxyReq, { end: true });
+}
+
+// Register BEFORE express.json() so raw request bodies are streamed intact
+app.use('/api/camera', proxyToCameraBackend);
+app.get('/api/health', proxyToCameraBackend);
+
 app.use(express.json());
 
-// Serve PDF.js assets from node_modules
-const PDFJS_DIST_PATH = path.resolve(__dirname, '../../node_modules/pdfjs-dist');
+// Serve PDF.js assets (prefer vendored new-ui/vendor/pdfjs if present)
+const VENDOR_PDFJS = path.resolve(__dirname, '../new-ui/vendor/pdfjs');
+const PDFJS_DIST_PATH = fsSync.existsSync(VENDOR_PDFJS) ? VENDOR_PDFJS : path.resolve(__dirname, '../../node_modules/pdfjs-dist');
 app.use('/pdfjs', express.static(path.join(PDFJS_DIST_PATH, 'build')));
 app.use('/pdfjs', express.static(PDFJS_DIST_PATH));
 app.use('/node_modules/pdfjs-dist', express.static(PDFJS_DIST_PATH));
@@ -99,9 +194,15 @@ app.get(['/pdfjs/pdf.js', '/node_modules/pdfjs-dist/build/pdf.js'], (req, res) =
 app.get(['/pdfjs/pdf.worker.js', '/node_modules/pdfjs-dist/build/pdf.worker.js'], (req, res) => {
   res.sendFile(path.join(PDFJS_DIST_PATH, 'build/pdf.worker.mjs'));
 });
+
+// Static assets
+app.use('/static', express.static(path.join(__dirname, '../new-ui')));
+app.use('/new-ui', express.static(path.join(__dirname, '../new-ui')));
+app.use(express.static(path.join(__dirname, '../new-ui')));
+
 // Serve static frontend UI
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
+app.get(['/', '/index.html'], (req, res) => {
+  res.sendFile(path.join(__dirname, '../new-ui/index.html'));
 });
 
 // Path validation helper (prevents directory traversal exploits)

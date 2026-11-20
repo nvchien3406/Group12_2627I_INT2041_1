@@ -29,11 +29,30 @@
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
 
-  <!-- PDF.js Library (Served from node_modules via Express /pdfjs route) -->
+  <!-- PDF.js Library (Supports local vendor, express route, and CDN fallback) -->
   <script type="module">
-    import * as pdfjsLib from '/pdfjs/pdf.mjs';
-    window.pdfjsLib = pdfjsLib;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+    async function initPdfJs() {
+      const candidates = [
+        '/static/vendor/pdfjs/build/pdf.mjs',
+        '/pdfjs/pdf.mjs',
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs'
+      ];
+      for (const src of candidates) {
+        try {
+          const mod = await import(src);
+          window.pdfjsLib = mod;
+          if (src.includes('/static/vendor/pdfjs/')) {
+            mod.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/build/pdf.worker.mjs';
+          } else if (src.includes('/pdfjs/')) {
+            mod.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+          } else {
+            mod.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+          }
+          break;
+        } catch (_) {}
+      }
+    }
+    await initPdfJs();
   </script>
 
   <!-- Google Fonts: Inter -->
@@ -78,72 +97,58 @@
       border-radius: 9999px;
     }
 
-    /* PDF Canvas Container */
-    .pdf-canvas-wrapper {
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    /* PDF Viewer & Stage (Frontend-aligned) */
+    .pdf-stage {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: auto;
+      scrollbar-gutter: stable both-edges;
+    }
+    #canvasHost {
+      display: grid;
+      place-items: center;
+      width: max-content;
+      min-width: 100%;
+      min-height: 100%;
+      margin: 0 auto;
+      line-height: 0;
+    }
+    #canvasHost canvas {
+      max-width: none;
+      flex-shrink: 0;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+      background: white;
     }
 
-    /* Category Active State */
-    .category-active {
-      background-color: #2563eb !important;
-      color: #ffffff !important;
-      border-color: #3b82f6 !important;
+    /* Presentation Mode (Frontend-aligned) */
+    body.presentation-mode {
+      overflow: hidden !important;
     }
-    .category-active .category-badge {
-      background-color: rgba(255, 255, 255, 0.25) !important;
-      color: #ffffff !important;
+    body.presentation-mode #pdfViewerModal {
+      background-color: #030712 !important;
     }
-
-    @keyframes pulseBorder {
-      0%, 100% { border-color: #3b82f6; }
-      50% { border-color: #60a5fa; }
-    }
-    .dropzone-active {
-      animation: pulseBorder 1.5s infinite ease-in-out;
-    }
-
-    /* Gesture HUD Toast Dynamic Animations */
-    @keyframes hudPopIn {
-      0% {
-        opacity: 0;
-        transform: translate(-50%, -20px) scale(0.85);
-      }
-      60% {
-        opacity: 1;
-        transform: translate(-50%, 4px) scale(1.05);
-      }
-      100% {
-        opacity: 1;
-        transform: translate(-50%, 0) scale(1);
-      }
-    }
-    @keyframes hudPulseGlow {
-      0%, 100% {
-        box-shadow: 0 0 25px rgba(59, 130, 246, 0.4), 0 10px 25px rgba(0, 0, 0, 0.5);
-      }
-      50% {
-        box-shadow: 0 0 40px rgba(59, 130, 246, 0.7), 0 14px 30px rgba(0, 0, 0, 0.6);
-      }
-    }
-    .gesture-hud-active {
-      animation: hudPopIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlow 1.8s ease-in-out infinite;
-    }
-
-    /* Presentation Mode Customization for PDF Modal */
-    .presentation-active #pdfViewerModal {
-      background-color: #000000 !important;
-    }
-    .presentation-active #pdfViewerHeader {
-      transition: opacity 0.3s ease, transform 0.3s ease;
-    }
-    .presentation-active.hide-chrome #pdfViewerHeader {
+    body.presentation-mode #pdfViewerHeader {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(12px);
       opacity: 0;
-      transform: translateY(-100%);
-      pointer-events: none;
+      transition: opacity 0.25s ease;
     }
-    .presentation-active #pdfScrollContainer {
-      background-color: #000000 !important;
-      padding: 0 !important;
+    body.presentation-mode #pdfViewerHeader:hover {
+      opacity: 1;
+    }
+    body.presentation-mode #viewHint,
+    body.presentation-mode #documentHint {
+      display: none !important;
+    }
+    body.presentation-mode #pdfStage {
+      padding: 6px;
+      background: #030712 !important;
     }
   </style>
 </head>
@@ -342,85 +347,51 @@
     </main>
   </div>
 
-  <!-- EMBEDDED PDF.JS VIEWER MODAL -->
-  <div id="pdfViewerModal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex flex-col hidden">
+  <!-- PDF SLIDE & DOCUMENT VIEWER MODAL (Structuralised like Frontend) -->
+  <div id="pdfViewerModal" class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex flex-col hidden select-none">
     
-    <!-- PDF Header -->
-    <header id="pdfViewerHeader" class="h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between text-slate-200 shrink-0 z-20">
-      <div class="flex items-center space-x-3 overflow-hidden max-w-xs sm:max-w-md">
-        <div class="p-1.5 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/20 shrink-0">
-          <i data-lucide="file-text" class="w-5 h-5"></i>
-        </div>
+    <!-- 1. Panel Header -->
+    <header id="pdfViewerHeader" class="panel-header h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between text-slate-200 shrink-0 z-20">
+      <div class="document-title flex items-center space-x-3 overflow-hidden max-w-xs sm:max-w-md">
+        <span class="file-badge px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 shrink-0">PDF</span>
         <div class="truncate">
-          <h3 id="pdfModalTitle" class="font-bold text-sm text-slate-100 truncate">Document.pdf</h3>
-          <p id="pdfModalSubtitle" class="text-[10px] text-slate-400 font-mono truncate">/path/to/document.pdf</p>
+          <span id="fileName" class="font-bold text-sm text-slate-100 truncate block">Chưa có tài liệu</span>
+          <span id="pdfStatus" class="muted text-[10px] text-slate-400 font-mono truncate block">Chọn một file để bắt đầu</span>
         </div>
       </div>
 
-      <!-- PDF Controls -->
-      <div class="flex items-center space-x-2 sm:space-x-3">
-        <!-- Pagination -->
-        <div class="flex items-center space-x-1.5 bg-slate-800 border border-slate-700 px-2 py-1 rounded-lg text-xs">
-          <button id="pdfPrevPage" title="Previous Page (←)" class="p-1 hover:bg-slate-700 rounded text-slate-300 disabled:opacity-30">
-            <i data-lucide="chevron-left" class="w-4 h-4"></i>
-          </button>
-          <div class="flex items-center space-x-1 font-mono text-xs">
-            <input type="number" id="pdfPageInput" value="1" min="1" class="w-10 text-center bg-slate-900 border border-slate-700 rounded py-0.5 text-white focus:outline-none focus:border-blue-500">
-            <span class="text-slate-400">/</span>
-            <span id="pdfTotalPages" class="text-slate-300">1</span>
-          </div>
-          <button id="pdfNextPage" title="Next Page (→)" class="p-1 hover:bg-slate-700 rounded text-slate-300 disabled:opacity-30">
-            <i data-lucide="chevron-right" class="w-4 h-4"></i>
-          </button>
-        </div>
-
-        <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
-
-        <!-- Zoom Controls -->
-        <div class="flex items-center space-x-1 bg-slate-800 border border-slate-700 px-2 py-1 rounded-lg text-xs">
-          <button id="pdfZoomOut" title="Zoom Out" class="p-1 hover:bg-slate-700 rounded text-slate-300">
-            <i data-lucide="zoom-out" class="w-4 h-4"></i>
-          </button>
-          <span id="pdfZoomText" class="font-mono text-[11px] w-12 text-center text-slate-300 select-none">120%</span>
-          <button id="pdfZoomIn" title="Zoom In" class="p-1 hover:bg-slate-700 rounded text-slate-300">
-            <i data-lucide="zoom-in" class="w-4 h-4"></i>
-          </button>
-          <button id="pdfFitPage" title="Fit Width" class="p-1 hover:bg-slate-700 rounded text-slate-300 ml-1">
-            <i data-lucide="maximize" class="w-3.5 h-3.5"></i>
-          </button>
-        </div>
-
-        <!-- Presentation Mode Button -->
-        <button id="pdfPresentationBtn" title="Chế độ Trình chiếu (Presentation Mode)" class="px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition shadow">
-          <i data-lucide="play" class="w-3.5 h-3.5"></i>
-          <span class="hidden sm:inline">Trình chiếu</span>
+      <!-- Action buttons -->
+      <div class="flex items-center space-x-2">
+        <!-- Open Camera in New Window Button -->
+        <button id="openCameraBtn" title="Mở Camera & Nhận diện Cử chỉ trong cửa sổ riêng" class="px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/40 rounded-lg text-xs font-semibold flex items-center space-x-2 transition shadow">
+          <i data-lucide="video" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Camera & Cử chỉ</span>
+          <span id="cameraStatusDot" class="w-2 h-2 rounded-full bg-slate-500 inline-block" title="Trạng thái camera"></span>
         </button>
 
-        <!-- Rotate Control -->
-        <button id="pdfRotate" title="Rotate Clockwise" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 transition">
+        <!-- Rotate Button -->
+        <button id="pdfRotate" title="Xoay 90° (Rotate Clockwise)" class="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 transition">
           <i data-lucide="rotate-cw" class="w-4 h-4"></i>
         </button>
 
-        <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
-
         <!-- Download Button -->
-        <a id="pdfDownloadBtn" href="#" download target="_blank" title="Download PDF" class="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow">
+        <a id="pdfDownloadBtn" href="#" download target="_blank" title="Tải xuống PDF" class="p-1.5 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white border border-slate-700 rounded-lg transition shadow">
           <i data-lucide="download" class="w-4 h-4"></i>
         </a>
 
-        <!-- Close Modal Button -->
-        <button id="closePdfModalBtn" title="Close Viewer (Esc)" class="p-2 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white border border-slate-700 rounded-lg transition">
+        <!-- Close Viewer Button -->
+        <button id="closePdfModalBtn" title="Đóng trình xem (Esc)" class="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white border border-slate-700 rounded-lg transition">
           <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
     </header>
 
-    <!-- PDF Canvas Viewport (Continuous Vertical Scroll) -->
-    <div id="pdfScrollContainer" class="flex-1 overflow-auto p-4 sm:p-8 flex flex-col items-center relative bg-slate-950">
+    <!-- 2. PDF Stage (Stage Container) -->
+    <div id="pdfStage" class="pdf-stage relative flex-1 overflow-auto bg-slate-950 flex items-center justify-center p-3 sm:p-6" tabindex="0">
       
-      <!-- Gesture HUD Toast -->
+      <!-- Gesture HUD Toast Overlay -->
       <div id="gestureHud" class="fixed top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 hidden">
-        <div class="flex items-center space-x-3 px-6 py-3 rounded-full bg-slate-900/90 dark:bg-slate-950/90 border border-blue-500/50 text-white shadow-2xl backdrop-blur-xl gesture-hud-active">
+        <div class="flex items-center space-x-3 px-6 py-3 rounded-full bg-slate-900/95 border border-blue-500/60 text-white shadow-2xl backdrop-blur-xl gesture-hud-active">
           <div id="gestureHudIconContainer" class="p-2 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center">
             <i id="gestureHudIcon" data-lucide="arrow-right" class="w-6 h-6 animate-pulse"></i>
           </div>
@@ -431,15 +402,77 @@
         </div>
       </div>
 
-      <div id="pdfPagesContainer" class="flex flex-col items-center gap-6 w-full max-w-5xl my-auto">
-        <!-- Dynamically rendered PDF pages -->
+      <!-- Empty State -->
+      <div id="pdfEmpty" class="empty-state text-center text-slate-400 p-8 hidden">
+        <div class="w-16 h-16 mx-auto rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 mb-3">
+          <i data-lucide="file-x" class="w-8 h-8"></i>
+        </div>
+        <h2 class="text-base font-bold text-slate-200 mb-1">Tài liệu của bạn ở đây</h2>
+        <p class="text-xs text-slate-400 max-w-sm mb-4">Chọn một file PDF từ danh sách file.<br>Mỗi trang PDF sẽ là một slide trình chiếu.</p>
       </div>
 
+      <!-- Canvas Host (Single Active Slide Page Rendered with Sharp High-DPI Canvas) -->
+      <div id="canvasHost" class="flex items-center justify-center m-auto transition-all duration-150"></div>
+
       <!-- Loading / Error Overlay -->
-      <div id="pdfLoadingOverlay" class="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center text-white z-10">
-        <i data-lucide="loader" class="w-10 h-10 animate-spin text-blue-500 mb-3"></i>
-        <p class="text-sm font-medium" id="pdfLoadingText">Rendering PDF document...</p>
+      <div id="pdfLoadingOverlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center text-white z-10 hidden">
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-col items-center shadow-2xl">
+          <i data-lucide="loader" class="w-8 h-8 animate-spin text-blue-500 mb-2"></i>
+          <p class="text-xs font-medium text-slate-200" id="pdfLoadingText">Đang tải tài liệu PDF...</p>
+        </div>
       </div>
+    </div>
+
+    <!-- 3. Viewer Toolbar -->
+    <div id="viewerToolbar" class="viewer-toolbar bg-slate-900 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-300 shrink-0 flex-wrap gap-2 z-20">
+      <div class="flex items-center space-x-2">
+        <label for="viewMode" class="text-slate-400 font-medium">Hiển thị</label>
+        <select id="viewMode" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-blue-500" disabled>
+          <option value="auto">Tự động</option>
+          <option value="page">Vừa toàn bộ trang</option>
+          <option value="width">Vừa chiều rộng</option>
+          <option value="custom">Thu/phóng tùy chỉnh</option>
+        </select>
+
+        <div class="h-4 w-px bg-slate-800 hidden sm:block"></div>
+
+        <!-- Zoom Controls -->
+        <button id="zoomOut" class="p-1 hover:bg-slate-800 text-slate-300 rounded border border-slate-700 disabled:opacity-30 transition" title="Thu nhỏ (−)" disabled>
+          <i data-lucide="minus" class="w-3.5 h-3.5"></i>
+        </button>
+        <output id="zoomLevel" class="font-mono text-[11px] w-12 text-center text-slate-300 select-none">—</output>
+        <button id="zoomIn" class="p-1 hover:bg-slate-800 text-slate-300 rounded border border-slate-700 disabled:opacity-30 transition" title="Phóng to (+)" disabled>
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+
+      <div class="flex items-center space-x-2">
+        <button id="presentationButton" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition shadow disabled:opacity-30" disabled>
+          <i data-lucide="play" class="w-3.5 h-3.5"></i>
+          <span id="presentationButtonText">Trình chiếu</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 4. View Hint -->
+    <p id="viewHint" class="view-hint text-[11px] text-slate-400 px-4 py-1.5 bg-slate-900/80 border-t border-slate-800/60 truncate shrink-0">
+      Mở PDF để chọn cách hiển thị.
+    </p>
+
+    <!-- 5. Document Footer -->
+    <div id="documentFooter" class="document-footer bg-slate-900 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-400 shrink-0">
+      <span id="documentHint" class="muted truncate hidden sm:inline">
+        Có thể dùng phím ← và → để đổi trang · Cử chỉ gạt tay để chuyển slide
+      </span>
+      <nav aria-label="Chuyển trang" class="flex items-center space-x-2 ml-auto sm:ml-0">
+        <button id="previousPage" class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-30 transition" title="Trang trước (←)" disabled>
+          <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>
+        <span id="pageCounter" class="font-mono text-xs text-slate-200 px-2 min-w-[50px] text-center select-none">— / —</span>
+        <button id="nextPage" class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 disabled:opacity-30 transition" title="Trang tiếp (→)" disabled>
+          <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>
+      </nav>
     </div>
   </div>
 
@@ -540,9 +573,9 @@
 
   <!-- APPLICATION LOGIC -->
   <script>
-    // Initialize PDF.js worker using served route /pdfjs/pdf.worker.mjs
-    if (typeof pdfjsLib !== 'undefined') {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
+    // Initialize PDF.js worker fallback if not already configured by loader
+    if (typeof pdfjsLib !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/build/pdf.worker.mjs';
     }
 
     // Retained Category File Extensions
@@ -565,66 +598,205 @@
       deleteTargetPath: null
     };
 
-    // PDF Viewer State
-    const pdfState = {
-      pdfDoc: null,
-      pageNum: 1,
-      scale: 1.2,
-      rotation: 0,
-      filePath: null,
-      observer: null,
-      isUserScrolling: true
-    };
+    // ------------------------------------------------------------------
+    // PDF VIEWER ENGINE (Adapted from Frontend Baseline)
+    // ------------------------------------------------------------------
+    class PdfViewer {
+      constructor(stage, host) {
+        this.stage = stage;
+        this.host = host;
+        this.document = null;
+        this.loadingTask = null;
+        this.currentPage = 0;
+        this.totalPages = 0;
+        this.renderTask = null;
+        this.generation = 0;
+        this.busy = false;
+        this.mode = "auto";
+        this.scale = 1;
+        this.customScale = 1;
+        this.rotation = 0;
+        this.pendingRefresh = false;
+        this.effectiveMode = "auto";
+      }
 
-    // DOM Elements
-    const fileContainer = document.getElementById('fileContainer');
-    const breadcrumbNav = document.getElementById('breadcrumbNav');
-    const searchInput = document.getElementById('searchInput');
-    const clearSearchBtn = document.getElementById('clearSearchBtn');
-    const sortSelect = document.getElementById('sortSelect');
-    const viewGridBtn = document.getElementById('viewGridBtn');
-    const viewListBtn = document.getElementById('viewListBtn');
-    const btnParentDir = document.getElementById('btnParentDir');
-    const btnRefresh = document.getElementById('btnRefresh');
-    const summaryText = document.getElementById('summaryText');
-    const currentPathDisplay = document.getElementById('currentPathDisplay');
-    const hiddenFileInput = document.getElementById('hiddenFileInput');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const newFolderBtn = document.getElementById('newFolderBtn');
+      async close() {
+        this.generation++;
+        if (this.renderTask) {
+          try { this.renderTask.cancel(); } catch (_) {}
+          await this.renderTask.promise.catch(() => {});
+        }
+        if (this.loadingTask) {
+          try { await this.loadingTask.destroy(); } catch (_) {}
+        }
+        this.document = this.loadingTask = this.renderTask = null;
+        this.currentPage = this.totalPages = 0;
+        this.busy = false;
+        this.pendingRefresh = false;
+        this.host.replaceChildren();
+      }
 
-    // PDF Modal Elements
+      async open(source) {
+        await this.close();
+        this.mode = "auto";
+        this.customScale = 1;
+        this.rotation = 0;
+        const generation = this.generation;
+
+        if (!window.pdfjsLib) {
+          try {
+            window.pdfjsLib = await import('/static/vendor/pdfjs/build/pdf.mjs');
+          } catch (_) {
+            window.pdfjsLib = await import('/pdfjs/pdf.mjs');
+          }
+        }
+        if (window.pdfjsLib && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/vendor/pdfjs/build/pdf.worker.mjs';
+        }
+
+        let docParams = {
+          cMapUrl: '/static/vendor/pdfjs/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: '/static/vendor/pdfjs/standard_fonts/',
+          wasmUrl: '/static/vendor/pdfjs/wasm/',
+          isEvalSupported: false
+        };
+
+        if (typeof source === 'string') {
+          docParams.url = source;
+        } else if (source instanceof Blob || source instanceof File) {
+          docParams.data = new Uint8Array(await source.arrayBuffer());
+        } else if (source instanceof Uint8Array || source instanceof ArrayBuffer) {
+          docParams.data = source instanceof Uint8Array ? source : new Uint8Array(source);
+        }
+
+        let needsPassword = false;
+        this.loadingTask = window.pdfjsLib.getDocument(docParams);
+        this.loadingTask.onPassword = () => {
+          needsPassword = true;
+          this.loadingTask.destroy().catch(() => {});
+        };
+
+        try {
+          const doc = await this.loadingTask.promise;
+          if (generation !== this.generation) return;
+          this.document = doc;
+          this.totalPages = doc.numPages;
+          await this.renderPage(1);
+        } catch (err) {
+          await this.close();
+          throw new Error(needsPassword ? "PDF có mật khẩu bảo vệ." : `Không đọc được PDF: ${err.message}`);
+        }
+      }
+
+      async renderPage(number) {
+        if (!this.document || this.busy || number < 1 || number > this.totalPages) return;
+        this.busy = true;
+        const generation = this.generation;
+
+        try {
+          const page = await this.document.getPage(number);
+          const original = page.getViewport({ scale: 1, rotation: this.rotation });
+          const padding = getComputedStyle(this.stage);
+          const padX = parseFloat(padding.paddingLeft || 0) + parseFloat(padding.paddingRight || 0);
+          const padY = parseFloat(padding.paddingTop || 0) + parseFloat(padding.paddingBottom || 0);
+          const width = Math.max(1, this.stage.clientWidth - padX);
+          const height = Math.max(1, this.stage.clientHeight - padY);
+          const fit = Math.min(width / original.width, height / original.height);
+
+          const effectiveMode = this.mode === "auto" ? (original.height > original.width ? "width" : "page") : this.mode;
+          const scale = effectiveMode === "custom" ? this.customScale : (effectiveMode === "width" ? width / original.width : fit);
+          const viewport = page.getViewport({ scale, rotation: this.rotation });
+
+          const ratio = Math.min(window.devicePixelRatio || 1, 2,
+            8192 / viewport.width, 8192 / viewport.height,
+            Math.sqrt(16000000 / (viewport.width * viewport.height)));
+
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width * ratio);
+          canvas.height = Math.ceil(viewport.height * ratio);
+          canvas.style.width = `${Math.ceil(viewport.width)}px`;
+          canvas.style.height = `${Math.ceil(viewport.height)}px`;
+          canvas.className = "shadow-2xl rounded-lg bg-white block";
+
+          this.renderTask = page.render({
+            canvasContext: canvas.getContext("2d"),
+            viewport,
+            transform: [ratio, 0, 0, ratio, 0, 0]
+          });
+          await this.renderTask.promise;
+
+          if (generation === this.generation) {
+            this.host.replaceChildren(canvas);
+            const changedPage = this.currentPage !== number;
+            this.currentPage = number;
+            this.scale = scale;
+            this.effectiveMode = effectiveMode;
+            if (changedPage) this.stage.scrollTo(0, 0);
+          }
+        } finally {
+          if (generation === this.generation) {
+            this.renderTask = null;
+            this.busy = false;
+            if (this.pendingRefresh) {
+              this.pendingRefresh = false;
+              await this.renderPage(this.currentPage);
+            }
+          }
+        }
+      }
+
+      async refresh() {
+        if (!this.document) return;
+        if (this.busy) {
+          this.pendingRefresh = true;
+          return;
+        }
+        await this.renderPage(this.currentPage);
+      }
+    }
+
+    // PDF Modal & Viewer Elements (Frontend-structured)
     const pdfViewerModal = document.getElementById('pdfViewerModal');
     const pdfViewerHeader = document.getElementById('pdfViewerHeader');
-    const pdfPresentationBtn = document.getElementById('pdfPresentationBtn');
-    const pdfModalTitle = document.getElementById('pdfModalTitle');
-    const pdfModalSubtitle = document.getElementById('pdfModalSubtitle');
-    const pdfScrollContainer = document.getElementById('pdfScrollContainer');
-    const pdfPagesContainer = document.getElementById('pdfPagesContainer');
-    const pdfPageInput = document.getElementById('pdfPageInput');
-    const pdfTotalPages = document.getElementById('pdfTotalPages');
-    const pdfZoomText = document.getElementById('pdfZoomText');
-    const pdfLoadingOverlay = document.getElementById('pdfLoadingOverlay');
-    const pdfLoadingText = document.getElementById('pdfLoadingText');
-    const closePdfModalBtn = document.getElementById('closePdfModalBtn');
-    const pdfPrevPage = document.getElementById('pdfPrevPage');
-    const pdfNextPage = document.getElementById('pdfNextPage');
-    const pdfZoomIn = document.getElementById('pdfZoomIn');
-    const pdfZoomOut = document.getElementById('pdfZoomOut');
-    const pdfFitPage = document.getElementById('pdfFitPage');
+    const pdfFileName = document.getElementById('fileName');
+    const pdfStatusText = document.getElementById('pdfStatus');
+    const openCameraBtn = document.getElementById('openCameraBtn');
+    const cameraStatusDot = document.getElementById('cameraStatusDot');
     const pdfRotate = document.getElementById('pdfRotate');
     const pdfDownloadBtn = document.getElementById('pdfDownloadBtn');
+    const closePdfModalBtn = document.getElementById('closePdfModalBtn');
+    const pdfStage = document.getElementById('pdfStage');
+    const canvasHost = document.getElementById('canvasHost');
+    const pdfEmpty = document.getElementById('pdfEmpty');
+    const pdfLoadingOverlay = document.getElementById('pdfLoadingOverlay');
+    const pdfLoadingText = document.getElementById('pdfLoadingText');
+    const viewModeSelect = document.getElementById('viewMode');
+    const zoomOutBtn = document.getElementById('zoomOut');
+    const zoomLevelText = document.getElementById('zoomLevel');
+    const zoomInBtn = document.getElementById('zoomIn');
+    const presentationButton = document.getElementById('presentationButton');
+    const presentationButtonText = document.getElementById('presentationButtonText');
+    const viewHintText = document.getElementById('viewHint');
+    const documentHintText = document.getElementById('documentHint');
+    const previousPageBtn = document.getElementById('previousPage');
+    const pageCounterText = document.getElementById('pageCounter');
+    const nextPageBtn = document.getElementById('nextPage');
 
-    // Presentation & Gesture HUD Elements
     const gestureHud = document.getElementById('gestureHud');
-    const gestureHudIcon = document.getElementById('gestureHudIcon');
     const gestureHudIconContainer = document.getElementById('gestureHudIconContainer');
     const gestureHudText = document.getElementById('gestureHudText');
     const gestureHudSubtext = document.getElementById('gestureHudSubtext');
     let gestureHudTimer = null;
     let presentationActive = false;
+    let presentationBusy = false;
     let gestureWs = null;
     let lastGestureSequence = 0;
-    let hideChromeTimeout = null;
+    let lastGestureSessionId = null;
+    let cameraWindow = null;
+    let resizeTimer = null;
+
+    const pdfViewer = new PdfViewer(pdfStage, canvasHost);
 
     // Other Modals
     const previewModal = document.getElementById('previewModal');
@@ -711,77 +883,52 @@
 
       // Modal Closers
       document.getElementById('closeModalBtn').addEventListener('click', () => previewModal.classList.add('hidden'));
-      closePdfModalBtn.addEventListener('click', () => {
-        if (presentationActive) togglePresentationMode(false);
-        if (pdfState.observer) pdfState.observer.disconnect();
-        pdfViewerModal.classList.add('hidden');
-      });
-
-      // Presentation Mode button
-      pdfPresentationBtn.addEventListener('click', () => togglePresentationMode());
-
-      // Auto-hide toolbar in presentation mode on mouse movement
-      pdfViewerModal.addEventListener('mousemove', () => resetHideChromeTimer());
-
-      // PDF Viewer Controls
-      pdfPrevPage.addEventListener('click', onPdfPrevPage);
-      pdfNextPage.addEventListener('click', onPdfNextPage);
-      pdfPageInput.addEventListener('change', (e) => {
-        const val = parseInt(e.target.value);
-        if (val >= 1 && pdfState.pdfDoc && val <= pdfState.pdfDoc.numPages) {
-          jumpToPage(val);
-        }
-      });
-      pdfZoomIn.addEventListener('click', async () => {
-        pdfState.scale += 0.2;
-        updateZoomDisplay();
-        await renderAllPages();
-      });
-      pdfZoomOut.addEventListener('click', async () => {
-        if (pdfState.scale > 0.4) {
-          pdfState.scale -= 0.2;
-          updateZoomDisplay();
-          await renderAllPages();
-        }
-      });
-      pdfFitPage.addEventListener('click', fitToWidth);
+      // PDF Viewer Controls (Frontend Baseline UI)
+      closePdfModalBtn.addEventListener('click', closePdfViewer);
+      presentationButton.addEventListener('click', () => setPresentation(!document.body.classList.contains('presentation-mode')));
+      openCameraBtn.addEventListener('click', openCameraWindow);
+      previousPageBtn.addEventListener('click', () => navigate(-1));
+      nextPageBtn.addEventListener('click', () => navigate(1));
+      viewModeSelect.addEventListener('change', e => changeView(e.target.value));
+      zoomInBtn.addEventListener('click', () => changeView('custom', pdfViewer.scale * 1.2));
+      zoomOutBtn.addEventListener('click', () => changeView('custom', pdfViewer.scale / 1.2));
       pdfRotate.addEventListener('click', async () => {
-        pdfState.rotation = (pdfState.rotation + 90) % 360;
-        await renderAllPages();
+        if (!pdfViewer.document || pdfViewer.busy) return;
+        pdfViewer.rotation = (pdfViewer.rotation + 90) % 360;
+        await pdfViewer.refresh();
+        updateViewerControls();
       });
 
       // Keyboard navigation (Arrow keys, Esc, F)
       window.addEventListener('keydown', (e) => {
-        // Ignore when editing inputs or textareas
         if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
-
         const isViewerOpen = !pdfViewerModal.classList.contains('hidden');
 
         if (isViewerOpen) {
           if (e.key === 'ArrowRight' || e.key === 'PageDown') {
             e.preventDefault();
-            onPdfNextPage();
+            navigate(1);
           } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
             e.preventDefault();
-            onPdfPrevPage();
+            navigate(-1);
           } else if (e.key === 'Escape') {
-            if (presentationActive) {
+            if (document.body.classList.contains('presentation-mode')) {
               e.preventDefault();
-              togglePresentationMode(false);
+              setPresentation(false);
             } else {
-              closePdfModalBtn.click();
+              closePdfViewer();
             }
           } else if (e.key.toLowerCase() === 'f') {
             e.preventDefault();
-            togglePresentationMode();
+            setPresentation(!document.body.classList.contains('presentation-mode'));
           }
         }
       });
 
       // Fullscreen change listener to sync presentation mode
       document.addEventListener('fullscreenchange', () => {
-        if (!document.fullscreenElement && presentationActive) {
-          togglePresentationMode(false);
+        if (!document.fullscreenElement && document.body.classList.contains('presentation-mode')) {
+          setPresentation(false);
         }
       });
 
@@ -835,332 +982,276 @@
       });
     }
 
-    // PDF.JS EMBEDDED VIEWER LOGIC (Continuous Vertical Scrolling)
+    // ------------------------------------------------------------------
+    // PDF VIEWER CORE LOGIC (Frontend Baseline Engine)
+    // ------------------------------------------------------------------
+    function updateViewerControls() {
+      const loaded = pdfViewer.currentPage > 0;
+      const blocked = !loaded || pdfViewer.busy;
+
+      viewModeSelect.disabled = blocked;
+      zoomOutBtn.disabled = blocked || pdfViewer.scale <= 0.25;
+      zoomInBtn.disabled = blocked || pdfViewer.scale >= 3;
+      presentationButton.disabled = blocked && !document.body.classList.contains('presentation-mode');
+
+      viewModeSelect.value = pdfViewer.mode;
+      zoomLevelText.textContent = loaded ? `${Math.round(pdfViewer.scale * 100)}%` : '—';
+
+      viewHintText.textContent = !loaded
+        ? 'Mở PDF để chọn cách hiển thị.'
+        : pdfViewer.effectiveMode === 'width'
+          ? 'Vừa chiều rộng · Cuộn dọc để đọc hết trang; ← → hoặc gạt tay để đổi trang.'
+          : pdfViewer.effectiveMode === 'custom'
+            ? 'Thu/phóng tùy chỉnh · Cuộn để xem phần ngoài khung.'
+            : 'Vừa toàn bộ trang · ← → hoặc gạt tay để đổi slide.';
+
+      previousPageBtn.disabled = blocked || pdfViewer.currentPage <= 1;
+      nextPageBtn.disabled = blocked || pdfViewer.currentPage >= pdfViewer.totalPages;
+      pageCounterText.textContent = loaded ? `${pdfViewer.currentPage} / ${pdfViewer.totalPages}` : '— / —';
+      pdfStatusText.textContent = loaded ? `${pdfViewer.totalPages} trang` : 'Chưa có tài liệu';
+    }
+
+    async function navigate(delta) {
+      if (pdfViewer.busy || !pdfViewer.document) return;
+      try {
+        const job = pdfViewer.renderPage(pdfViewer.currentPage + delta);
+        updateViewerControls();
+        await job;
+      } catch (err) {
+        showToast(`Không hiển thị được trang: ${err.message}`, 'warning');
+      } finally {
+        updateViewerControls();
+      }
+    }
+
+    async function changeView(mode, scale = pdfViewer.scale) {
+      if (!pdfViewer.document || pdfViewer.busy) return;
+      pdfViewer.mode = mode;
+      if (mode === 'custom') {
+        pdfViewer.customScale = Math.min(3, Math.max(0.25, scale));
+      }
+      try {
+        const job = pdfViewer.refresh();
+        updateViewerControls();
+        await job;
+        pdfStage.scrollTo(0, 0);
+      } catch (err) {
+        showToast(`Không thay đổi được hiển thị: ${err.message}`, 'warning');
+      } finally {
+        updateViewerControls();
+      }
+    }
+
+    async function setPresentation(enabled) {
+      if (presentationBusy) return;
+      presentationBusy = true;
+      document.body.classList.toggle('presentation-mode', enabled);
+      presentationButtonText.textContent = enabled ? 'Thoát' : 'Trình chiếu';
+      presentationButton.setAttribute('aria-pressed', String(enabled));
+
+      try {
+        if (enabled) {
+          if (!document.fullscreenElement) {
+            await document.documentElement.requestFullscreen().catch(() => {});
+          }
+          showToast('Chế độ trình chiếu: Bật (F / Esc để thoát, ← / → đổi slide)');
+        } else {
+          if (document.fullscreenElement) {
+            await document.exitFullscreen().catch(() => {});
+          }
+        }
+      } catch (_) {}
+      finally {
+        presentationBusy = false;
+        updateViewerControls();
+        setTimeout(() => pdfViewer.refresh(), 120);
+      }
+    }
+
+    // ResizeObserver: auto re-scales PDF like Frontend
+    const stageResizeObserver = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(async () => {
+        if (!pdfViewer.document) return;
+        try { await pdfViewer.refresh(); } catch (_) {}
+        finally { updateViewerControls(); }
+      }, 100);
+    });
+    stageResizeObserver.observe(pdfStage);
+
     async function openPdfViewer(fileName) {
       const fullPath = buildFullPath(state.currentPath, fileName);
-      pdfState.filePath = fullPath;
-      pdfState.pageNum = 1;
-      pdfState.scale = 1.2;
-      pdfState.rotation = 0;
+      pdfFileName.textContent = fileName;
+      pdfStatusText.textContent = 'Đang đọc PDF…';
+      pdfDownloadBtn.href = `/api/download?path=${encodeURIComponent(fullPath)}`;
+      pdfDownloadBtn.setAttribute('download', fileName);
 
-      pdfModalTitle.textContent = fileName;
-      pdfModalSubtitle.textContent = fullPath;
       pdfViewerModal.classList.remove('hidden');
       pdfLoadingOverlay.classList.remove('hidden');
-
-      const pdfUrl = `/api/view?path=${encodeURIComponent(fullPath)}`;
-      pdfDownloadBtn.href = `/api/download?path=${encodeURIComponent(fullPath)}`;
+      pdfEmpty.classList.add('hidden');
 
       try {
-        if (!window.pdfjsLib) {
-          window.pdfjsLib = await import('/pdfjs/pdf.mjs');
-        }
-        if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.mjs';
-        }
-        if (pdfState.pdfDoc) {
-          pdfState.pdfDoc.destroy();
-        }
-        const loadingTask = window.pdfjsLib.getDocument({
-          url: pdfUrl,
-          cMapUrl: '/pdfjs/cmaps/',
-          cMapPacked: true,
-          standardFontDataUrl: '/pdfjs/standard_fonts/',
-          wasmUrl: '/pdfjs/wasm/',
-        });
-        pdfState.pdfDoc = await loadingTask.promise;
-        pdfTotalPages.textContent = pdfState.pdfDoc.numPages;
-        pdfPageInput.max = pdfState.pdfDoc.numPages;
-        pdfPageInput.value = 1;
-
-        updateZoomDisplay();
-        await renderAllPages();
+        const pdfUrl = `/api/view?path=${encodeURIComponent(fullPath)}`;
+        await pdfViewer.open(pdfUrl);
+        pdfEmpty.classList.add('hidden');
+        pdfLoadingOverlay.classList.add('hidden');
       } catch (err) {
-        console.error('PDF.js Error:', err);
-        pdfLoadingText.textContent = 'Failed to load PDF file from server.';
-        showToast('Error loading PDF from backend.', 'warning');
-      }
-    }
-
-    async function renderAllPages() {
-      if (!pdfState.pdfDoc) return;
-      pdfLoadingOverlay.classList.remove('hidden');
-
-      if (pdfState.observer) {
-        pdfState.observer.disconnect();
-      }
-
-      pdfPagesContainer.innerHTML = '';
-
-      const numPages = pdfState.pdfDoc.numPages;
-      const pageWrappers = [];
-
-      for (let i = 1; i <= numPages; i++) {
-        const wrapper = document.createElement('div');
-        wrapper.id = `pdf-page-wrapper-${i}`;
-        wrapper.setAttribute('data-page-num', i);
-        wrapper.className = 'pdf-canvas-wrapper relative transition-all duration-150 rounded-lg overflow-hidden bg-white shadow-2xl my-2';
-        
-        const canvas = document.createElement('canvas');
-        canvas.id = `pdf-canvas-${i}`;
-        canvas.className = 'block';
-        
-        wrapper.appendChild(canvas);
-        pdfPagesContainer.appendChild(wrapper);
-        pageWrappers.push({ wrapper, canvas, pageNum: i });
-      }
-
-      const dpr = window.devicePixelRatio || 1;
-      for (const item of pageWrappers) {
-        try {
-          const page = await pdfState.pdfDoc.getPage(item.pageNum);
-          const viewport = page.getViewport({ scale: pdfState.scale, rotation: pdfState.rotation });
-
-          item.canvas.width = Math.floor(viewport.width * dpr);
-          item.canvas.height = Math.floor(viewport.height * dpr);
-          item.canvas.style.width = Math.floor(viewport.width) + 'px';
-          item.canvas.style.height = Math.floor(viewport.height) + 'px';
-
-          const ctx = item.canvas.getContext('2d');
-          ctx.scale(dpr, dpr);
-
-          await page.render({
-            canvasContext: ctx,
-            viewport: viewport
-          }).promise;
-        } catch (e) {
-          console.error(`Error rendering PDF page ${item.pageNum}:`, e);
+        console.error('PDF Load Error:', err);
+        pdfLoadingOverlay.classList.add('hidden');
+        if (!pdfViewer.document) {
+          pdfEmpty.classList.remove('hidden');
+          pdfFileName.textContent = 'Không đọc được tài liệu';
+          pdfStatusText.textContent = 'Lỗi nạp file';
         }
-      }
-
-      pdfLoadingOverlay.classList.add('hidden');
-      setupIntersectionObserver();
-    }
-
-    function setupIntersectionObserver() {
-      if (pdfState.observer) {
-        pdfState.observer.disconnect();
-      }
-
-      const options = {
-        root: pdfScrollContainer,
-        rootMargin: '0px',
-        threshold: 0.3
-      };
-
-      pdfState.observer = new IntersectionObserver((entries) => {
-        if (!pdfState.isUserScrolling) return;
-
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            const pageNum = parseInt(entry.target.getAttribute('data-page-num'));
-            if (pageNum) {
-              pdfState.pageNum = pageNum;
-              pdfPageInput.value = pageNum;
-            }
-          }
-        });
-      }, options);
-
-      const wrappers = pdfPagesContainer.querySelectorAll('[data-page-num]');
-      wrappers.forEach(w => pdfState.observer.observe(w));
-    }
-
-    function jumpToPage(pageNum) {
-      if (!pdfState.pdfDoc) return;
-      const validNum = Math.max(1, Math.min(pageNum, pdfState.pdfDoc.numPages));
-      pdfState.pageNum = validNum;
-      pdfPageInput.value = validNum;
-
-      const targetWrapper = document.getElementById(`pdf-page-wrapper-${validNum}`);
-      if (targetWrapper) {
-        pdfState.isUserScrolling = false;
-        targetWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        setTimeout(() => {
-          pdfState.isUserScrolling = true;
-        }, 600);
+        showToast(err.message || 'Lỗi đọc file PDF.', 'warning');
+      } finally {
+        updateViewerControls();
+        if (window.lucide) lucide.createIcons();
       }
     }
 
-    function onPdfPrevPage() {
-      if (pdfState.pageNum > 1) {
-        jumpToPage(pdfState.pageNum - 1);
+    async function closePdfViewer() {
+      if (document.body.classList.contains('presentation-mode')) {
+        setPresentation(false);
       }
-    }
-
-    function onPdfNextPage() {
-      if (pdfState.pdfDoc && pdfState.pageNum < pdfState.pdfDoc.numPages) {
-        jumpToPage(pdfState.pageNum + 1);
-      }
-    }
-
-    async function fitToWidth() {
-      if (!pdfState.pdfDoc) return;
-      try {
-        const page = await pdfState.pdfDoc.getPage(1);
-        const unscaledViewport = page.getViewport({ scale: 1.0, rotation: pdfState.rotation });
-        const containerWidth = pdfScrollContainer.clientWidth - 64;
-        if (containerWidth > 200 && unscaledViewport.width > 0) {
-          pdfState.scale = Math.max(0.4, Math.min(2.5, containerWidth / unscaledViewport.width));
-          updateZoomDisplay();
-          await renderAllPages();
-        }
-      } catch (e) {
-        pdfState.scale = 1.2;
-        updateZoomDisplay();
-        await renderAllPages();
-      }
-    }
-
-    function updateZoomDisplay() {
-      pdfZoomText.textContent = `${Math.round(pdfState.scale * 100)}%`;
+      pdfViewerModal.classList.add('hidden');
+      await pdfViewer.close();
+      pdfEmpty.classList.remove('hidden');
+      updateViewerControls();
     }
 
     // ------------------------------------------------------------------
-    // PRESENTATION MODE (Full-Screen & Distraction-Free)
+    // GESTURE SUPPORT & HUD (From Frontend)
     // ------------------------------------------------------------------
-    function togglePresentationMode(forceState = null) {
-      const modal = pdfViewerModal;
-      if (modal.classList.contains('hidden')) return;
-
-      const target = forceState !== null ? forceState : !presentationActive;
-      presentationActive = target;
-      document.body.classList.toggle('presentation-active', presentationActive);
-
-      if (presentationActive) {
-        pdfPresentationBtn.classList.remove('bg-blue-600/20', 'text-blue-400');
-        pdfPresentationBtn.classList.add('bg-blue-600', 'text-white');
-        pdfPresentationBtn.querySelector('span').textContent = 'Thoát';
-        showToast('Chế độ trình chiếu: Bật (F / Esc để thoát, ← / → đổi trang)');
-        try {
-          if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(() => {});
-          }
-        } catch (_) {}
-        // Auto fit width for immersive presentation
-        fitToWidth();
-        resetHideChromeTimer();
-      } else {
-        pdfPresentationBtn.classList.remove('bg-blue-600', 'text-white');
-        pdfPresentationBtn.classList.add('bg-blue-600/20', 'text-blue-400');
-        pdfPresentationBtn.querySelector('span').textContent = 'Trình chiếu';
-        document.body.classList.remove('hide-chrome');
-        clearTimeout(hideChromeTimeout);
-        try {
-          if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
-          }
-        } catch (_) {}
-      }
-    }
-
-    function resetHideChromeTimer() {
-      if (!presentationActive) return;
-      document.body.classList.remove('hide-chrome');
-      clearTimeout(hideChromeTimeout);
-      hideChromeTimeout = setTimeout(() => {
-        if (presentationActive) {
-          document.body.classList.add('hide-chrome');
-        }
-      }, 2500);
-    }
-
-    // ------------------------------------------------------------------
-    // GESTURE HUD TOAST NOTIFICATION SYSTEM
-    // ------------------------------------------------------------------
-    function showGestureHud(gesture) {
+    function showGestureFeedback(message, gesture = null) {
       if (!gestureHud) return;
 
-      clearTimeout(gestureHudTimer);
-      const isNext = gesture === 'SWIPE_RIGHT';
+      const isNext = gesture === 'SWIPE_RIGHT' || message.includes('tiếp theo');
+      const isPrev = gesture === 'SWIPE_LEFT' || message.includes('trước');
+      const iconName = isNext ? 'arrow-right' : (isPrev ? 'arrow-left' : 'hand');
 
-      gestureHudText.textContent = isNext ? 'Trang tiếp theo' : 'Trang trước đó';
-      gestureHudSubtext.textContent = isNext ? '👉 SWIPE_RIGHT DETECTED' : '👈 SWIPE_LEFT DETECTED';
-      gestureHudIcon.setAttribute('data-lucide', isNext ? 'arrow-right' : 'arrow-left');
+      gestureHudText.textContent = isNext ? 'Trang tiếp theo' : (isPrev ? 'Trang trước' : message);
+      gestureHudSubtext.textContent = gesture ? `${gesture} DETECTED` : message;
 
-      if (isNext) {
-        gestureHudIconContainer.className = 'p-2 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center';
-      } else {
-        gestureHudIconContainer.className = 'p-2 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center';
-      }
+      gestureHudIconContainer.className = 'p-2 rounded-full flex items-center justify-center ' + (
+        isNext ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'
+      );
+      gestureHudIconContainer.innerHTML = `<i data-lucide="${iconName}" class="w-6 h-6 animate-pulse"></i>`;
 
       if (window.lucide) {
-        lucide.createIcons({
-          targets: [gestureHudIcon]
-        });
+        lucide.createIcons();
       }
 
       gestureHud.classList.remove('hidden');
       gestureHud.classList.add('gesture-hud-active');
 
+      clearTimeout(gestureHudTimer);
       gestureHudTimer = setTimeout(() => {
         gestureHud.classList.add('hidden');
         gestureHud.classList.remove('gesture-hud-active');
-      }, 1400);
+      }, 1200);
     }
 
-    // ------------------------------------------------------------------
-    // WEBSOCKET CLIENT FOR GESTURES (INSTANT SLIDE NAVIGATION)
-    // ------------------------------------------------------------------
-    function handleGestureEvent(data) {
-      if (!data || !data.gesture) return;
-      if (data.sequence && data.sequence <= lastGestureSequence) return;
-      if (data.sequence) lastGestureSequence = data.sequence;
+    function handleGesture(event) {
+      if (!pdfViewer.document) return;
+      if (event.sessionId && event.sessionId !== lastGestureSessionId) {
+        lastGestureSessionId = event.sessionId;
+        lastGestureSequence = 0;
+      }
+      if (event.sequence && event.sequence <= lastGestureSequence) return;
+      if (event.sequence) lastGestureSequence = event.sequence;
 
-      const isViewerOpen = !pdfViewerModal.classList.contains('hidden');
+      if (event.gesture === 'SWIPE_RIGHT') {
+        showGestureFeedback('👉 Trang tiếp theo (Swipe Right)', 'SWIPE_RIGHT');
+        navigate(1);
+      } else if (event.gesture === 'SWIPE_LEFT') {
+        showGestureFeedback('👈 Trang trước (Swipe Left)', 'SWIPE_LEFT');
+        navigate(-1);
+      }
+    }
+    window.handleGesture = handleGesture;
 
-      if (data.gesture === 'SWIPE_RIGHT') {
-        showGestureHud('SWIPE_RIGHT');
-        if (isViewerOpen) {
-          onPdfNextPage();
-        }
-      } else if (data.gesture === 'SWIPE_LEFT') {
-        showGestureHud('SWIPE_LEFT');
-        if (isViewerOpen) {
-          onPdfPrevPage();
-        }
+    // ------------------------------------------------------------------
+    // CAMERA COMPANION WINDOW & MULTI-CHANNEL SYNC
+    // ------------------------------------------------------------------
+    function openCameraWindow() {
+      if (cameraWindow && !cameraWindow.closed) {
+        cameraWindow.focus();
+        return cameraWindow;
+      }
+      const width = 450;
+      const height = 740;
+      const left = Math.max(10, window.screen.availWidth - width - 20);
+      const top = 40;
+      cameraWindow = window.open('camera.html', 'GestureSlideCamera',
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=no`);
+      return cameraWindow;
+    }
+
+    function updateCameraIndicator(cameraState, sessionId = null) {
+      if (cameraState === 'stopped' || cameraState === 'starting' || (sessionId && sessionId !== lastGestureSessionId)) {
+        lastGestureSequence = 0;
+        lastGestureSessionId = sessionId || null;
+      }
+      if (!cameraStatusDot) return;
+      if (cameraState === 'running') {
+        cameraStatusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block';
+        cameraStatusDot.title = 'Camera đang chạy';
+      } else if (cameraState === 'starting') {
+        cameraStatusDot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse inline-block';
+        cameraStatusDot.title = 'Camera đang mở';
+      } else {
+        cameraStatusDot.className = 'w-2 h-2 rounded-full bg-slate-500 inline-block';
+        cameraStatusDot.title = 'Camera đã tắt';
       }
     }
 
+    // BroadcastChannel sync across companion window and viewer
+    const gestureChannel = new BroadcastChannel('gesture_channel');
+    gestureChannel.onmessage = (e) => {
+      const data = e.data;
+      if (!data) return;
+      if (data.type === 'GESTURE') {
+        handleGesture(data);
+      } else if (data.type === 'CAMERA_STATUS') {
+        updateCameraIndicator(data.state, data.sessionId);
+      }
+    };
+
+    window.addEventListener('message', (e) => {
+      const data = e.data;
+      if (!data) return;
+      if (data.type === 'GESTURE') {
+        handleGesture(data);
+      } else if (data.type === 'CAMERA_STATUS') {
+        updateCameraIndicator(data.state, data.sessionId);
+      }
+    });
+
+    // Fallback WebSocket connection to /ws/gesture
     function initGestureWebSocket() {
       if (gestureWs) {
         try { gestureWs.close(); } catch (_) {}
         gestureWs = null;
       }
-
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Connect to local Node server endpoint
       const wsUrl = `${proto}//${location.host}/ws/gesture`;
 
       try {
         const ws = new WebSocket(wsUrl);
         gestureWs = ws;
-
-        ws.onopen = () => {
-          console.log('[Gesture WS] Connected to backend gesture WebSocket stream');
-        };
-
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            handleGestureEvent(data);
-          } catch (e) {
-            console.error('[Gesture WS] Failed to parse message:', e);
-          }
+            if (data.gesture) handleGesture(data);
+          } catch (_) {}
         };
-
         ws.onclose = () => {
-          // Reconnect after 3 seconds if disconnected
           gestureWs = null;
-          setTimeout(initGestureWebSocket, 3000);
+          setTimeout(initGestureWebSocket, 4000);
         };
-
-        ws.onerror = (err) => {
-          console.warn('[Gesture WS] WebSocket error (will retry):', err);
-        };
-      } catch (err) {
-        console.warn('[Gesture WS] Init error:', err);
-        setTimeout(initGestureWebSocket, 3000);
+      } catch (_) {
+        setTimeout(initGestureWebSocket, 4000);
       }
     }
 

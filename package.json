@@ -1,0 +1,24 @@
+{
+  "name": "gesture-",
+  "version": "1.0.0",
+  "description": "Baseline chạy local: **chọn PDF → Bật camera → MediaPipe vẽ 21 khớp trên mỗi bàn tay**. Tối đa 2 tay; ảnh soi gương. Có nút và phím mũi tên để chuyển trang PDF. Bản này chưa nhận dạng SWIPE_LEFT/SWIPE_RIGHT và chưa đổi slide bằng cử chỉ.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NVB22/gesture-.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/NVB22/gesture-/issues"
+  },
+  "homepage": "https://github.com/NVB22/gesture-#readme",
+  "dependencies": {
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "pdfjs-dist": "^6.4.299"
+  }
+}

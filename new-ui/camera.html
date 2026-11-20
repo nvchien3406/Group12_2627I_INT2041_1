@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="vi" class="h-full dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera & Nhận diện Cử chỉ · Gesture Slide</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #090d16;
+      color: #f1f5f9;
+      user-select: none;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
+      50% { box-shadow: 0 0 25px rgba(59, 130, 246, 0.8); }
+    }
+
+    .gesture-flash {
+      animation: pulseGlow 0.8s ease-in-out;
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col text-slate-200 text-xs overflow-y-auto">
+
+  <!-- Header -->
+  <header class="px-4 py-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0 sticky top-0 z-30 backdrop-blur-md">
+    <div class="flex items-center space-x-2.5">
+      <div class="p-1.5 rounded-lg bg-blue-500/20 text-blue-400 border border-blue-500/30">
+        <i data-lucide="video" class="w-4 h-4"></i>
+      </div>
+      <div>
+        <h1 class="font-bold text-sm text-white tracking-tight">Camera & Cử chỉ</h1>
+        <p class="text-[10px] text-slate-400">MediaPipe · 21 khớp bàn tay</p>
+      </div>
+    </div>
+
+    <div class="flex items-center space-x-2">
+      <span id="connectionBadge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="connectionText">Đã kết nối Slide</span>
+      </span>
+      <span id="cameraBadge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+        Đã tắt
+      </span>
+    </div>
+  </header>
+
+  <main class="p-4 space-y-4 flex-1 flex flex-col">
+    <!-- Camera Preview Stage -->
+    <div class="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-xl flex flex-col">
+      <div class="relative w-full aspect-[4/3] bg-slate-950 flex items-center justify-center overflow-hidden">
+        <!-- Live Mirror Stream with MediaPipe Landmarks -->
+        <img id="cameraPreview" class="w-full h-full object-contain hidden" alt="Luồng xem trước camera soi gương">
+
+        <!-- Camera Empty Placeholder -->
+        <div id="cameraEmpty" class="flex flex-col items-center justify-center p-6 text-center text-slate-400">
+          <div class="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 mb-3">
+            <i data-lucide="camera-off" class="w-7 h-7"></i>
+          </div>
+          <p id="cameraPlaceholder" class="font-medium text-slate-300 text-sm">Camera hiện đang tắt</p>
+          <p class="text-[11px] text-slate-500 mt-1 max-w-[220px]">Bấm Bật camera để nhận diện khớp tay và điều khiển slide theo thời gian thực.</p>
+        </div>
+
+        <!-- Real-time Gesture Floating Overlay on Video -->
+        <div id="gestureOverlay" class="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-300 opacity-0 transform -translate-y-2">
+          <div id="gestureOverlayContent" class="px-4 py-2 rounded-full bg-blue-600/90 text-white font-bold text-xs tracking-wide shadow-2xl backdrop-blur-md border border-blue-400/50 flex items-center space-x-2">
+            <span id="gestureOverlayIconWrap" class="flex items-center justify-center"><i data-lucide="hand" class="w-4 h-4"></i></span>
+            <span id="gestureOverlayText">SWIPE</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls & Status Bar -->
+      <div class="p-3.5 bg-slate-900/90 border-t border-slate-800/80 space-y-3">
+        <!-- Device Select Row -->
+        <div class="flex items-center justify-between text-xs">
+          <label for="cameraIndex" class="text-slate-400 font-medium flex items-center space-x-1.5">
+            <i data-lucide="video" class="w-3.5 h-3.5 text-slate-500"></i>
+            <span>Thiết bị</span>
+          </label>
+          <select id="cameraIndex" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-blue-500 max-w-[190px]">
+            <option value="0">Camera 0 · Mặc định</option>
+            <option value="1">Camera 1</option>
+            <option value="2">Camera 2</option>
+            <option value="3">Camera 3</option>
+            <option value="4">Camera 4</option>
+          </select>
+        </div>
+
+        <!-- Toggle Button -->
+        <button id="cameraButton" class="w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 transition flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20">
+          <i data-lucide="power" class="w-4 h-4"></i>
+          <span id="cameraButtonText">Bật camera</span>
+        </button>
+
+        <!-- Dynamic Camera Message -->
+        <p id="cameraMessage" class="text-center text-slate-400 text-[11px] leading-relaxed min-h-[16px]">
+          Chọn thiết bị rồi bấm Bật camera để nhận diện.
+        </p>
+      </div>
+    </div>
+
+    <!-- Metrics (3 Columns exactly as in Frontend) -->
+    <div class="grid grid-cols-3 gap-2 text-center bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
+      <div class="border-r border-slate-800/80 pr-2">
+        <strong id="handCount" class="block text-xl font-bold text-blue-400 tracking-tight">—</strong>
+        <span class="text-[10px] text-slate-400">Bàn tay</span>
+      </div>
+      <div class="border-r border-slate-800/80 px-2">
+        <strong id="cameraFps" class="block text-xl font-bold text-emerald-400 tracking-tight">—</strong>
+        <span class="text-[10px] text-slate-400">FPS xử lý</span>
+      </div>
+      <div class="pl-2">
+        <strong id="processingTime" class="block text-xl font-bold text-indigo-400 tracking-tight">—</strong>
+        <span class="text-[10px] text-slate-400">ms / frame</span>
+      </div>
+    </div>
+
+    <!-- Real-time Gesture Info Card -->
+    <div class="bg-slate-900 rounded-2xl border border-slate-800 p-3.5 space-y-2.5 shadow-md">
+      <div class="flex items-center justify-between">
+        <span class="font-semibold text-slate-300 flex items-center space-x-1.5">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-blue-400"></i>
+          <span>Cử chỉ gần nhất</span>
+        </span>
+        <span id="gestureSeq" class="text-[10px] font-mono text-slate-500">Seq: #0</span>
+      </div>
+
+      <div id="gestureCard" class="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center space-x-3 transition-colors duration-200">
+        <div id="gestureCardIconWrap" class="w-9 h-9 rounded-xl bg-slate-800 text-slate-400 flex items-center justify-center shrink-0">
+          <i id="gestureCardIcon" data-lucide="hand" class="w-5 h-5"></i>
+        </div>
+        <div class="truncate flex-1">
+          <div id="gestureCardTitle" class="font-bold text-slate-200 text-xs truncate">Chưa có cử chỉ</div>
+          <div id="gestureCardDesc" class="text-[10px] text-slate-500 font-mono truncate">Đang chờ nhận diện...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hand Skeleton Details -->
+    <div class="bg-slate-900 rounded-2xl border border-slate-800 p-3.5 space-y-2">
+      <div class="font-semibold text-slate-300 flex items-center space-x-1.5">
+        <i data-lucide="activity" class="w-3.5 h-3.5 text-slate-400"></i>
+        <span>Chi tiết khớp tay</span>
+      </div>
+      <div id="handDetails" class="space-y-1.5 text-[11px] text-slate-400">
+        <div class="text-slate-500 italic">Đưa tay vào khung hình để theo dõi 21 khớp...</div>
+      </div>
+    </div>
+
+    <!-- Gesture Instructions / Guide -->
+    <div class="bg-gradient-to-br from-slate-900 to-slate-950 rounded-2xl border border-slate-800 p-3.5 space-y-2">
+      <h3 class="font-semibold text-slate-200 flex items-center space-x-1.5">
+        <i data-lucide="help-circle" class="w-3.5 h-3.5 text-blue-400"></i>
+        <span>Hướng dẫn điều khiển slide</span>
+      </h3>
+      <div class="space-y-2 text-[11px] text-slate-400">
+        <div class="flex items-start space-x-2">
+          <span class="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-bold shrink-0">👉 Gạt phải</span>
+          <span>Chuyển sang <b>Trang tiếp theo</b> (Swipe Right).</span>
+        </div>
+        <div class="flex items-start space-x-2">
+          <span class="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold shrink-0">👈 Gạt trái</span>
+          <span>Quay lại <b>Trang trước</b> (Swipe Left).</span>
+        </div>
+        <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/80">
+          Khoảng cách khuyến nghị: 0.5m – 1.5m, ánh sáng vừa đủ, đưa lòng bàn tay hướng về camera.
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="p-3 bg-slate-900 border-t border-slate-800 text-center text-slate-500 text-[10px]">
+    <span>Gesture Slide · Cửa sổ Camera phụ</span>
+  </footer>
+
+  <!-- Logic Script -->
+  <script type="module">
+    // Broadcast Channel for intra-window sync
+    const channel = new BroadcastChannel('gesture_channel');
+
+    // DOM Elements
+    const $ = id => document.getElementById(id);
+    const cameraBadge = $('cameraBadge');
+    const cameraPreview = $('cameraPreview');
+    const cameraEmpty = $('cameraEmpty');
+    const cameraPlaceholder = $('cameraPlaceholder');
+    const cameraMessage = $('cameraMessage');
+    const cameraButton = $('cameraButton');
+    const cameraButtonText = $('cameraButtonText');
+    const cameraIndex = $('cameraIndex');
+    const handCount = $('handCount');
+    const cameraFps = $('cameraFps');
+    const processingTime = $('processingTime');
+    const handDetails = $('handDetails');
+    const gestureOverlay = $('gestureOverlay');
+    const gestureOverlayText = $('gestureOverlayText');
+    const gestureOverlayIconWrap = $('gestureOverlayIconWrap');
+    const gestureCard = $('gestureCard');
+    const gestureCardTitle = $('gestureCardTitle');
+    const gestureCardDesc = $('gestureCardDesc');
+    const gestureCardIconWrap = $('gestureCardIconWrap');
+    const gestureSeq = $('gestureSeq');
+    const connectionBadge = $('connectionBadge');
+    const connectionText = $('connectionText');
+
+    let cameraBusy = false;
+    let cameraState = 'stopped';
+    let previewSession = null;
+    let overlayTimer = null;
+
+    function generateClientId() {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+    }
+
+    async function requestJson(url, method = 'GET', body = null, timeoutMs = 15000) {
+      const options = {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : null,
+        cache: 'no-store'
+      };
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        options.signal = AbortSignal.timeout(timeoutMs);
+      }
+      const res = await fetch(url, options);
+      const text = await res.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          data = {};
+        }
+      }
+      if (!res.ok) {
+        throw new Error(
+          (typeof data.detail === 'string' && data.detail) ||
+          (typeof data.error === 'string' && data.error) ||
+          `Yêu cầu camera thất bại (HTTP ${res.status}).`
+        );
+      }
+      return data;
+    }
+
+    // Camera Client
+    class StandaloneCameraClient {
+      constructor(onStatus, onError, onGesture) {
+        this.onStatus = onStatus;
+        this.onError = onError;
+        this.onGesture = onGesture;
+        this.clientId = generateClientId();
+        this.sessionId = null;
+        this.generation = 0;
+        this.timer = this.heartbeatTimer = null;
+        this.ws = null;
+        this.lastGestureSequence = 0;
+      }
+
+      clearPollTimers() {
+        clearTimeout(this.timer);
+        clearInterval(this.heartbeatTimer);
+        this.timer = null;
+        this.heartbeatTimer = null;
+      }
+
+      closeWebSocket() {
+        if (this.ws) {
+          try { this.ws.close(); } catch (_) {}
+          this.ws = null;
+        }
+      }
+
+      clearTimers() {
+        this.clearPollTimers();
+        this.closeWebSocket();
+      }
+
+      connectWebSocket(session, generation) {
+        this.closeWebSocket();
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${proto}//${location.host}/ws/gesture/${session}`;
+        try {
+          const ws = new WebSocket(wsUrl);
+          this.ws = ws;
+          ws.onmessage = (event) => {
+            if (this.generation !== generation || this.sessionId !== session) return;
+            try {
+              const data = JSON.parse(event.data);
+              if (data.gesture && data.sequence > this.lastGestureSequence) {
+                this.lastGestureSequence = data.sequence;
+                if (this.onGesture) this.onGesture(data);
+              }
+            } catch (_) {}
+          };
+        } catch (_) {}
+      }
+
+      async start(idx) {
+        const data = await requestJson('/api/camera/start', 'POST', {
+          client_id: this.clientId,
+          camera_index: idx
+        });
+        this.sessionId = data.session_id;
+        this.generation++;
+        this.lastGestureSequence = 0;
+        this.onStatus(data);
+        this.watch();
+        this.connectWebSocket(data.session_id, this.generation);
+        return data.session_id;
+      }
+
+      watch() {
+        this.clearPollTimers();
+        const session = this.sessionId;
+        const generation = this.generation;
+        let failures = 0;
+
+        const poll = async () => {
+          if (generation !== this.generation || !session) return;
+          try {
+            const data = await requestJson(`/api/camera/${session}/status`);
+            if (generation !== this.generation) return;
+            failures = 0;
+
+            if (data.gesture_sequence && data.gesture_sequence > this.lastGestureSequence) {
+              this.lastGestureSequence = data.gesture_sequence;
+              if (this.onGesture && data.last_gesture) {
+                this.onGesture({ gesture: data.last_gesture, sequence: data.gesture_sequence });
+              }
+            }
+
+            if (['stopped', 'error'].includes(data.state)) {
+              this.sessionId = null;
+              this.generation++;
+              this.clearTimers();
+              this.onStatus(data);
+              return;
+            }
+            this.onStatus(data);
+          } catch (e) {
+            if (generation !== this.generation) return;
+            if (++failures >= 3) {
+              this.beaconStop();
+              this.sessionId = null;
+              this.generation++;
+              this.clearTimers();
+              this.onStatus({ state: 'error', error: e.message || 'Mất kết nối tới server camera.' });
+              return;
+            }
+          }
+          if (generation === this.generation) {
+            this.timer = setTimeout(poll, 400);
+          }
+        };
+
+        this.timer = setTimeout(poll, 200);
+        this.heartbeatTimer = setInterval(() => {
+          if (session === this.sessionId) {
+            requestJson(`/api/camera/${session}/heartbeat`, 'POST').catch(() => {});
+          }
+        }, 3000);
+      }
+
+      async stop() {
+        if (!this.sessionId) return;
+        const session = this.sessionId;
+        this.clearTimers();
+        this.generation++;
+        this.onStatus({ state: 'stopping' });
+        try {
+          await requestJson(`/api/camera/${session}/stop`, 'POST');
+          this.sessionId = null;
+          this.onStatus({ state: 'stopped' });
+        } catch (e) {
+          this.watch();
+          this.connectWebSocket(session, this.generation);
+          throw e;
+        }
+      }
+
+      beaconStop() {
+        if (this.sessionId) {
+          navigator.sendBeacon(`/api/camera/${this.sessionId}/stop`, '');
+        }
+      }
+    }
+
+    function syncButtonState() {
+      cameraButton.disabled = cameraBusy;
+      cameraButtonText.textContent = cameraBusy
+        ? 'Đang xử lý...'
+        : (camera.sessionId ? 'Tắt camera' : 'Bật camera');
+      cameraButton.className = 'w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-white transition flex items-center justify-center space-x-2 shadow-lg ' +
+        (cameraBusy ? 'opacity-60 cursor-not-allowed ' : '') +
+        (camera.sessionId ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-600/20');
+      cameraIndex.disabled = cameraBusy || !!camera.sessionId;
+    }
+
+    function showCameraError(message) {
+      cameraBadge.textContent = 'Có lỗi';
+      cameraBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30';
+      cameraMessage.textContent = message || 'Lỗi điều khiển camera.';
+      cameraMessage.className = 'text-center text-rose-400 text-[11px] leading-relaxed min-h-[16px]';
+      if (['stopped', 'error'].includes(cameraState)) {
+        cameraPlaceholder.textContent = 'Chưa kết nối được camera';
+      }
+    }
+
+    // Status updater
+    function updateStatus(data) {
+      cameraState = data.state;
+      const labels = {
+        stopped: 'Đã tắt',
+        starting: 'Đang mở',
+        running: 'Đang chạy',
+        stopping: 'Đang tắt',
+        error: 'Có lỗi'
+      };
+
+      cameraBadge.textContent = labels[data.state] || data.state;
+      cameraBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold border ' + (
+        data.state === 'running' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+        data.state === 'starting' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' :
+        data.state === 'error' ? 'bg-rose-500/10 text-rose-400 border-rose-500/30' :
+        'bg-slate-800 text-slate-400 border-slate-700'
+      );
+
+      cameraMessage.className = data.state === 'error'
+        ? 'text-center text-rose-400 text-[11px] leading-relaxed min-h-[16px]'
+        : 'text-center text-slate-400 text-[11px] leading-relaxed min-h-[16px]';
+
+      if (data.state === 'running') {
+        if (camera.sessionId && previewSession !== camera.sessionId) {
+          previewSession = camera.sessionId;
+          cameraPreview.src = `/api/camera/${camera.sessionId}/preview`;
+        }
+        cameraEmpty.classList.add('hidden');
+        cameraPreview.classList.remove('hidden');
+        cameraMessage.textContent = data.hand_count
+          ? `Đã nhận diện ${data.hand_count} bàn tay · hình soi gương`
+          : 'Đang tìm bàn tay. Hãy đưa tay vào khung hình.';
+      } else if (data.state === 'starting') {
+        cameraPlaceholder.textContent = 'Đang mở camera và nạp MediaPipe...';
+        cameraMessage.textContent = 'Lần bật đầu tiên có thể mất vài giây.';
+      } else if (['stopped', 'error'].includes(data.state)) {
+        cameraPreview.removeAttribute('src');
+        cameraPreview.classList.add('hidden');
+        cameraEmpty.classList.remove('hidden');
+        previewSession = null;
+        cameraPlaceholder.textContent = data.state === 'error' ? 'Chưa kết nối được camera' : 'Camera hiện đang tắt';
+        cameraMessage.textContent = data.error || 'Chọn thiết bị rồi bấm Bật camera để nhận diện.';
+      }
+
+      handCount.textContent = data.state === 'running' ? (data.hand_count ?? '0') : '—';
+      cameraFps.textContent = data.fps > 0 ? data.fps.toFixed(1) : '—';
+      processingTime.textContent = data.processing_ms > 0 ? data.processing_ms.toFixed(0) : '—';
+
+      // Hand rows
+      const hands = data.hands || [];
+      if (hands.length === 0) {
+        handDetails.innerHTML = `<div class="text-slate-500 italic">${data.state === 'running' ? 'Chưa phát hiện bàn tay nào trong khung hình.' : 'Bật camera để theo dõi khớp tay.'}</div>`;
+      } else {
+        handDetails.innerHTML = hands.map((h, i) => `
+          <div class="flex items-center justify-between p-2 rounded-lg bg-slate-950 border border-slate-800/80">
+            <span class="font-medium text-slate-200">Bàn tay ${i + 1}</span>
+            <span class="text-emerald-400 font-mono text-[10px]">${h.landmarks?.length || 21} khớp</span>
+          </div>
+        `).join('');
+      }
+
+      syncButtonState();
+
+      // Broadcast camera state to main viewer
+      const statusMsg = {
+        type: 'CAMERA_STATUS',
+        state: data.state,
+        sessionId: camera.sessionId,
+        handCount: data.hand_count || 0
+      };
+      channel.postMessage(statusMsg);
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage(statusMsg, '*');
+        } catch (_) {}
+      }
+    }
+
+    // Gesture Handler
+    function handleGesture(data) {
+      if (!data || !data.gesture) return;
+      const isNext = data.gesture === 'SWIPE_RIGHT';
+      const isPrev = data.gesture === 'SWIPE_LEFT';
+
+      const title = isNext ? '👉 Trang tiếp theo' : isPrev ? '👈 Trang trước' : data.gesture;
+      const desc = `${data.gesture} DETECTED`;
+      const iconName = isNext ? 'arrow-right' : (isPrev ? 'arrow-left' : 'hand');
+
+      // Update Gesture Card
+      gestureCardTitle.textContent = title;
+      gestureCardDesc.textContent = desc;
+      gestureSeq.textContent = `Seq: #${data.sequence || '0'}`;
+
+      gestureCard.classList.remove('border-slate-800');
+      gestureCard.classList.add(isNext ? 'border-blue-500/60' : 'border-purple-500/60', 'gesture-flash');
+      gestureCardIconWrap.className = 'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ' + (
+        isNext ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'
+      );
+      gestureCardIconWrap.innerHTML = `<i data-lucide="${iconName}" class="w-5 h-5"></i>`;
+
+      // Update Floating Overlay on Camera
+      gestureOverlayText.textContent = isNext ? 'SWIPE RIGHT 👉' : (isPrev ? 'SWIPE LEFT 👈' : data.gesture);
+      gestureOverlayIconWrap.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4"></i>`;
+      gestureOverlay.classList.remove('opacity-0', '-translate-y-2');
+      gestureOverlay.classList.add('opacity-100', 'translate-y-0');
+
+      if (window.lucide) {
+        lucide.createIcons();
+      }
+
+      clearTimeout(overlayTimer);
+      overlayTimer = setTimeout(() => {
+        gestureOverlay.classList.add('opacity-0', '-translate-y-2');
+        gestureOverlay.classList.remove('opacity-100', 'translate-y-0');
+        gestureCard.classList.remove('border-blue-500/60', 'border-purple-500/60', 'gesture-flash');
+        gestureCard.classList.add('border-slate-800');
+      }, 1200);
+
+      // BROADCAST GESTURE TO MAIN VIEWER VIA MULTIPLE CHANNELS
+      const gesturePayload = {
+        type: 'GESTURE',
+        gesture: data.gesture,
+        sequence: data.sequence,
+        sessionId: camera.sessionId
+      };
+      channel.postMessage(gesturePayload);
+
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage(gesturePayload, '*');
+          if (typeof window.opener.handleGesture === 'function') {
+            window.opener.handleGesture(gesturePayload);
+          }
+        } catch (_) {}
+      }
+    }
+
+    const camera = new StandaloneCameraClient(
+      updateStatus,
+      err => showCameraError(err),
+      handleGesture
+    );
+
+    // Non-blocking server health check on load
+    async function checkServerHealth() {
+      try {
+        const health = await requestJson('/api/health', 'GET', null, 5000);
+        if (cameraState === 'stopped' && !camera.sessionId) {
+          if (health.ok && health.model_ready) {
+            cameraMessage.className = 'text-center text-slate-400 text-[11px] leading-relaxed min-h-[16px]';
+            cameraMessage.textContent = 'Dịch vụ camera sẵn sàng. Chọn thiết bị rồi bấm Bật camera để nhận diện.';
+          } else if (health.ok && !health.model_ready) {
+            showCameraError('Thiếu model nhận diện bàn tay. Chạy lại install.bat rồi khởi động lại server.');
+          }
+        }
+      } catch (_) {
+        if (cameraState === 'stopped' && !camera.sessionId) {
+          cameraBadge.textContent = 'Chưa kết nối';
+          cameraBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30';
+          cameraMessage.className = 'text-center text-amber-400 text-[11px] leading-relaxed min-h-[16px]';
+          cameraMessage.textContent = 'Chưa kết nối được dịch vụ camera (port 8000). Hãy chạy run.py rồi bấm Bật camera.';
+        }
+      }
+    }
+
+    // Camera Button Click
+    cameraButton.addEventListener('click', async () => {
+      if (cameraBusy) return;
+      cameraBusy = true;
+      syncButtonState();
+
+      try {
+        if (camera.sessionId) {
+          await camera.stop();
+        } else {
+          const session = await camera.start(Number(cameraIndex.value));
+          previewSession = session;
+          cameraPreview.src = `/api/camera/${session}/preview`;
+        }
+      } catch (err) {
+        showCameraError(err.message || 'Lỗi điều khiển camera.');
+      } finally {
+        cameraBusy = false;
+        syncButtonState();
+      }
+    });
+
+    // Camera Preview Error
+    cameraPreview.addEventListener('error', () => {
+      if (previewSession && camera.sessionId === previewSession && cameraState === 'running') {
+        cameraMessage.textContent = 'Luồng xem trước camera bị ngắt. Hãy tắt rồi bật lại.';
+      }
+    });
+
+    // Sync Check with Opener
+    function checkOpenerConnection() {
+      const isConnected = !!(window.opener && !window.opener.closed);
+      if (isConnected) {
+        connectionBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center space-x-1';
+        connectionText.textContent = 'Đã kết nối Slide';
+      } else {
+        connectionBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700 flex items-center space-x-1';
+        connectionText.textContent = 'Cửa sổ độc lập';
+      }
+    }
+    setInterval(checkOpenerConnection, 2000);
+    checkOpenerConnection();
+    checkServerHealth();
+
+    // Auto cleanup on close
+    window.addEventListener('pagehide', () => camera.beaconStop());
+    window.addEventListener('beforeunload', () => camera.beaconStop());
+
+    // Listen to messages from main viewer
+    window.addEventListener('message', (e) => {
+      if (!e.data) return;
+      if (e.data.type === 'START_CAMERA' && !camera.sessionId) {
+        cameraButton.click();
+      } else if (e.data.type === 'STOP_CAMERA' && camera.sessionId) {
+        cameraButton.click();
+      }
+    });
+
+    if (window.lucide) {
+      lucide.createIcons();
+    }
+  </script>
+</body>
+</html>
